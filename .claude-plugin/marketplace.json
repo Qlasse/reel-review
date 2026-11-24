@@ -1,0 +1,22 @@
+{
+  "name": "reel-review",
+  "owner": {
+    "name": "Qlasse"
+  },
+  "metadata": {
+    "description": "Страница пометок на кадре для монтажа Reels с Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "reel-review",
+      "description": "Пометки на кадре, правки Claude без чата, предпросмотр из кода, дорожки, три варианта, правила из правок.",
+      "version": "0.1.0",
+      "source": "./plugin",
+      "category": "productivity",
+      "author": {
+        "name": "Qlasse"
+      },
+      "homepage": "https://github.com/Qlasse/reel-review"
+    }
+  ]
+}

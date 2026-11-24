@@ -1,0 +1,1232 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Пометки на кадре</title>
+<style>
+:root {
+  color-scheme: dark;
+  --bg: #0f1012; --panel: #16171a; --raise: #1f2024; --raise2: #282a2f; --line: #2c2e33; --line2: #3a3d44;
+  --text: #ececed; --dim: #a1a3aa; --faint: #6e717a;
+  --mark: #ff5a36; --draft: #ffd400; --ok: #3ccf7e; --ask: #6aa8ff; --warn: #ffb020;
+  --r: 8px;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+  font: 14px/1.45 -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; }
+::selection { background: rgba(255, 90, 54, .35); }
+* { scrollbar-width: thin; scrollbar-color: var(--line2) transparent; }
+:focus-visible { outline: 2px solid var(--ask); outline-offset: 2px; }
+button, select, textarea, input { font: inherit; color: inherit; caret-color: var(--mark); }
+button { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: var(--raise); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 6px 11px; cursor: pointer; transition: background .12s, border-color .12s, color .12s; }
+button:hover:not(:disabled) { border-color: var(--line2); background: var(--raise2); }
+button.on { background: var(--text); color: var(--bg); border-color: var(--text); }
+button.primary { background: var(--mark); border-color: var(--mark); color: #fff; font-weight: 600; }
+button.primary:hover:not(:disabled) { background: #ff6c4c; border-color: #ff6c4c; }
+button.danger { background: #3a1611; border-color: #6b2a1d; color: #ffb4a3; font-weight: 600; }
+button:disabled { opacity: .4; cursor: default; }
+button.icon { padding: 6px; width: 34px; height: 34px; }
+button.ghost { background: none; border-color: transparent; color: var(--dim); }
+button.ghost:hover:not(:disabled) { color: var(--text); background: var(--raise); }
+svg { width: 18px; height: 18px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+input, select, textarea { background: var(--raise); border: 1px solid var(--line); border-radius: var(--r); padding: 7px 9px; }
+input:focus, select:focus, textarea:focus { border-color: var(--line2); outline: none; }
+textarea { width: 100%; resize: vertical; }
+[hidden] { display: none !important; }
+.grow { flex: 1; }
+.dim { color: var(--dim); } .small { font-size: 11px; }
+.num { font-variant-numeric: tabular-nums; }
+
+.app { display: grid; grid-template-columns: 232px 1fr 340px; grid-template-rows: 100vh; height: 100vh; }
+
+/* ---------- ролики ---------- */
+aside { background: var(--panel); border-right: 1px solid var(--line); padding: 12px 10px; overflow: auto; }
+.asidetop { display: flex; gap: 6px; margin-bottom: 6px; }
+.asidetop input { flex: 1; min-width: 0; }
+aside h2 { font-size: 11px; color: var(--faint); margin: 16px 8px 4px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.reel { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: var(--r); cursor: pointer; }
+.reel:hover { background: var(--raise); }
+.reel.cur { background: var(--raise2); }
+.reel .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.reel .meta { font-size: 11px; color: var(--faint); }
+.badge { font-size: 11px; font-weight: 600; border-radius: 99px; padding: 0 7px; line-height: 18px; background: var(--raise2); color: var(--dim); }
+.badge.wait { background: var(--mark); color: #fff; }
+.badge.ans { background: var(--ask); color: #071225; }
+
+/* ---------- кадр ---------- */
+main { display: flex; flex-direction: column; min-width: 0; min-height: 0; padding: 12px 16px; gap: 8px; }
+.stagewrap { flex: 1; min-height: 0; display: flex; justify-content: center; }
+.stage { position: relative; width: 0; height: 0; background: #000; border-radius: 6px; overflow: hidden; overflow: clip; } /* размер — fitStage(); clip — не даёт прокрутить кадр к курсору поля */
+.stage video, .stage canvas, .stage img.pv { position: absolute; inset: 0; width: 100%; height: 100%; }
+.stage .pv { object-fit: contain; background: #000; }
+.stage canvas { cursor: crosshair; }
+.empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--faint); }
+.pvtag { position: absolute; left: 8px; top: 8px; z-index: 2; padding: 2px 10px; border-radius: 99px; border: 0; background: var(--ask);
+  color: #071225; font-size: 11px; font-weight: 600; }
+.pvtag:hover:not(:disabled) { background: #8dbcff; }
+.tin { position: absolute; z-index: 3; min-width: 120px; padding: 0 4px; border-radius: 4px; background: rgba(0,0,0,.55);
+  border: 1px dashed var(--draft); font-weight: 700; line-height: 1.1; }
+
+.timeline { position: relative; height: 30px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); cursor: pointer; flex: none; }
+.timeline .range { position: absolute; top: 0; bottom: 0; background: rgba(255, 212, 0, .2); border-left: 2px solid var(--draft); border-right: 2px solid var(--draft); }
+.timeline .mk { position: absolute; top: 4px; width: 10px; height: 10px; margin-left: -5px; border-radius: 50%; background: var(--mark); }
+.timeline .mk.done { background: var(--ok); } .timeline .mk.question { background: var(--ask); }
+.timeline .mk.accepted { background: var(--faint); } .timeline .mk.wontfix { background: var(--warn); }
+.timeline .ph { position: absolute; top: 0; bottom: 0; width: 2px; background: #fff; margin-left: -1px; pointer-events: none; }
+
+.toolbar { display: flex; align-items: center; gap: 6px; flex: none; flex-wrap: wrap; row-gap: 6px; }
+.tright { display: flex; gap: 6px; margin-left: auto; }
+.tc { min-width: 80px; padding: 0 4px; color: var(--dim); }
+.rate { min-width: 40px; padding: 6px 6px; font-weight: 600; }
+.rate.slow { color: var(--draft); }
+.seg { display: inline-flex; gap: 2px; padding: 2px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
+.seg button { border: 0; background: none; width: 30px; height: 30px; padding: 0; color: var(--dim); }
+.seg button:hover:not(:disabled) { background: var(--raise); color: var(--text); }
+.seg button.on { background: var(--raise2); color: var(--text); }
+.seg .gap { width: 1px; margin: 4px 3px; background: var(--line); }
+.swatches { display: inline-flex; gap: 3px; padding: 0 2px; }
+.sw { width: 16px; height: 16px; padding: 0; border-radius: 50%; border: 2px solid var(--line2); }
+.sw:hover:not(:disabled) { border-color: var(--dim); }
+.sw.on { border-color: #fff; box-shadow: 0 0 0 2px var(--bg), 0 0 0 3px #fff; }
+.spin svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- дорожки ---------- */
+.tracks { display: grid; grid-template-columns: 34px 1fr; gap: 0 6px; flex: none; }
+.trlabels { display: grid; grid-auto-rows: 20px; row-gap: 3px; }
+.trlabels > * { display: flex; align-items: center; justify-content: center; color: var(--faint); }
+.trlabels svg { width: 15px; height: 15px; }
+.trlabels button { position: relative; padding: 0; border: 0; background: none; color: var(--faint); width: 100%; height: 20px; }
+.trlabels button:hover:not(:disabled) { color: var(--text); background: none; }
+.trlabels .cnt { position: absolute; right: -4px; top: -3px; min-width: 14px; padding: 0 3px; border-radius: 99px; background: var(--warn);
+  color: #2a1a00; font-size: 11px; font-weight: 700; line-height: 14px; }
+.trlabels .cnt.err { background: var(--mark); color: #fff; } .trlabels .cnt.stale { opacity: .45; }
+.trscroll { overflow-x: auto; overflow-y: hidden; min-width: 0; }
+.trinner { position: relative; min-width: 100%; display: grid; grid-auto-rows: 20px; row-gap: 3px; }
+.lane { position: relative; background: var(--panel); border-radius: 4px; cursor: pointer; }
+.it { position: absolute; top: 2px; bottom: 2px; min-width: 3px; border-radius: 3px; padding: 0 3px; overflow: hidden; white-space: nowrap;
+  font-size: 11px; line-height: 16px; color: #111; cursor: pointer; }
+.it.cut { background: #3a3f4a; color: var(--text); } .it.cut.alt { background: #4d5464; }
+.it.ins { background: #6aa8ff; } .it.word { background: #d9dadd; } .it.word.edited { background: var(--ok); }
+.lane.ro .it.word { background: #5b5e66; color: #d9dadd; cursor: default; }
+.it.snd { background: var(--warn); cursor: grab; } .it.snd.missing { background: var(--mark); }
+.it.chk { background: var(--mark); color: #fff; } .it.chk.warn { background: var(--warn); color: #2a1a00; }
+.it.sel { outline: 2px solid #fff; z-index: 2; }
+.trph { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; pointer-events: none; z-index: 3; }
+.insp { grid-column: 2; display: flex; align-items: center; gap: 8px; height: 38px; padding-top: 4px; overflow: hidden; white-space: nowrap; }
+.insp input[type=text] { min-width: 220px; } .insp input[type=number] { width: 86px; }
+.insp .what { color: var(--dim); max-width: 520px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- правая колонка ---------- */
+.side { background: var(--panel); border-left: 1px solid var(--line); padding: 14px; overflow: auto; display: flex; flex-direction: column; gap: 16px; }
+.reelhead { display: flex; align-items: center; gap: 8px; }
+.reelhead .title { flex: 1; min-width: 0; font-size: 18px; font-weight: 700; letter-spacing: -.01em; }
+.reelhead .title span { font-size: 11px; font-weight: 400; color: var(--faint); margin-left: 6px; letter-spacing: 0; }
+.reelhead select { padding: 5px 8px; }
+
+.claude { display: grid; gap: 8px; }
+.chead { display: flex; align-items: center; gap: 8px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+.dot.run { background: var(--warn); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .35; } }
+.cacts { display: flex; flex-wrap: wrap; gap: 6px; }
+.feed { display: grid; gap: 6px; max-height: 150px; overflow: auto; }
+.feed:empty { display: none; }
+.feed .tool { font: 11px/1.35 ui-monospace, Menlo, monospace; color: var(--faint); white-space: pre-wrap; word-break: break-all; }
+.feed .txt { white-space: pre-wrap; }
+.feed .ok { color: var(--ok); } .feed .err { color: var(--mark); } .feed .meta { color: var(--faint); font-size: 11px; }
+
+.composer { display: grid; gap: 8px; }
+.composer textarea { min-height: 76px; }
+.ctx { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--dim); }
+.ctx .chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; line-height: 22px; border-radius: 99px; background: var(--raise); }
+.ctx .chip.range { background: rgba(255, 212, 0, .16); color: var(--draft); }
+.ctx button { width: 22px; height: 22px; padding: 0; border-radius: 50%; }
+.ctx button svg { width: 13px; height: 13px; }
+.cbtns { display: flex; gap: 6px; }
+.cbtns .primary { flex: 1; }
+
+#notes { display: grid; gap: 8px; }
+.note { border: 1px solid var(--line); border-radius: 10px; padding: 10px 10px 10px 12px; background: var(--raise); cursor: pointer; }
+.note:hover { border-color: var(--line2); }
+.note.sel { border-color: var(--text); }
+.note header { display: flex; align-items: center; gap: 8px; font-size: 11px; color: var(--dim); }
+.note header button { margin: -6px -6px -6px auto; width: 28px; height: 28px; opacity: 0; }
+.note:hover header button, .note.sel header button, .note header button:focus-visible { opacity: 1; }
+.note .tx { margin: 6px 0 0; white-space: pre-wrap; }
+.st { font-size: 11px; border-radius: 99px; padding: 0 8px; line-height: 18px; font-weight: 600; }
+.st.new, .st.reopened { background: var(--mark); color: #fff; }
+.st.done { background: var(--ok); color: #062814; } .st.question { background: var(--ask); color: #071225; }
+.st.wontfix { background: var(--warn); color: #2a1a00; } .st.accepted { background: var(--raise2); color: var(--dim); }
+.thread { border-left: 2px solid var(--line2); padding-left: 8px; margin: 8px 0 0; display: grid; gap: 4px; }
+.thread b { color: var(--dim); font-weight: 600; }
+.pics { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.pics figure { margin: 0; } .pics img, .pics video { width: 100%; border-radius: 6px; display: block; background: #000; }
+.pics figcaption { font-size: 11px; color: var(--faint); }
+.acts { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.other { font-size: 11px; color: var(--warn); margin-top: 4px; }
+.rule { border: 1px dashed var(--ask); border-radius: var(--r); padding: 8px; margin-top: 8px; display: grid; gap: 6px; cursor: default; }
+.rule textarea { min-height: 54px; }
+
+/* ---------- окна ---------- */
+dialog { border: 1px solid var(--line2); border-radius: 14px; background: var(--panel); color: var(--text); padding: 0; width: min(460px, 92vw);
+  box-shadow: 0 24px 60px rgba(0,0,0,.55), 0 2px 8px rgba(0,0,0,.4); }
+dialog::backdrop { background: rgba(0,0,0,.66); }
+dialog form { display: grid; gap: 14px; padding: 18px; }
+dialog h2 { margin: 0; font-size: 18px; letter-spacing: -.01em; }
+.dbody { display: grid; gap: 10px; color: var(--dim); }
+.dbody input { width: 100%; color: var(--text); }
+.dbtns { display: flex; gap: 8px; justify-content: flex-end; }
+.dbtns [value=cancel] { order: -1; }
+.opt { display: grid; grid-template-columns: auto 1fr auto; gap: 2px 10px; align-items: center; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 10px; cursor: pointer; color: var(--text); }
+.opt:has(input:checked) { border-color: var(--mark); background: rgba(255, 90, 54, .08); }
+.opt input { margin: 0; accent-color: var(--mark); }
+.opt small { grid-column: 2 / 4; color: var(--faint); font-size: 11px; word-break: break-all; }
+dialog.wide { width: min(1180px, 96vw); }
+.vargrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; }
+.vargrid figure { margin: 0; display: grid; gap: 8px; align-content: start; }
+.vargrid img, .vargrid video { width: 100%; aspect-ratio: 9 / 16; object-fit: contain; background: #000; border-radius: 10px; }
+.vargrid figcaption { color: var(--dim); }
+.vargrid figcaption b { color: var(--text); margin-right: 4px; }
+dialog.pic { width: auto; max-width: 94vw; background: none; border: 0; box-shadow: none; }
+dialog.pic img { display: block; max-height: 92vh; max-width: 94vw; border-radius: 8px; }
+.keys { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; color: var(--text); }
+.keys dt { color: var(--dim); text-align: right; white-space: nowrap; }
+.keys dd { margin: 0; }
+kbd { font: 11px ui-monospace, Menlo, monospace; color: var(--text); border: 1px solid var(--line2); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; }
+
+#tip { position: fixed; z-index: 30; max-width: 300px; padding: 7px 10px; border-radius: 8px; background: #2a2c32; border: 1px solid var(--line2);
+  color: var(--text); line-height: 1.35; box-shadow: 0 8px 24px rgba(0,0,0,.45); pointer-events: none; opacity: 0; transform: translateY(-2px);
+  transition: opacity .12s, transform .12s; }
+#tip.show { opacity: 1; transform: none; }
+#tip kbd { margin-left: 4px; }
+.stage.busy::after { content: ""; position: absolute; z-index: 4; left: 50%; top: 50%; width: 40px; height: 40px; margin: -20px 0 0 -20px;
+  border-radius: 50%; border: 3px solid rgba(255,255,255,.25); border-top-color: #fff; animation: spin .8s linear infinite; }
+.stage.busy video { filter: brightness(.6); }
+#toast { position: fixed; left: 50%; bottom: 20px; z-index: 20; transform: translate(-50%, 12px); max-width: min(640px, 90vw);
+  padding: 9px 14px; border-radius: 10px; background: var(--raise2); border: 1px solid var(--line2);
+  box-shadow: 0 10px 30px rgba(0,0,0,.45); opacity: 0; pointer-events: none; transition: opacity .18s, transform .25s cubic-bezier(.2, .9, .3, 1); }
+#toast.show { opacity: 1; transform: translate(-50%, 0); }
+#toast.err { background: #3a1611; border-color: #6b2a1d; color: #ffd2c6; }
+
+@media (max-width: 1100px) {
+  .app { grid-template-columns: 1fr; grid-template-rows: auto; height: auto; }
+  aside { max-height: 200px; } .stagewrap { flex: none; height: min(75vh, calc((100vw - 32px) * 16 / 9)); }
+  .toolbar { flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <div class="asidetop">
+      <input id="filter" type="search" placeholder="Поиск" aria-label="Поиск роликов: id, бренд, статус">
+      <button class="icon ghost" id="keysbtn" data-icon="keyboard" title="Горячие клавиши · ?" aria-label="Горячие клавиши"></button>
+      <button class="icon ghost" id="openrules" data-icon="sliders" title="Правила и настройки — правила брендов, CLAUDE.md, каталог приёмов, модель Claude. Открывается отдельным окном" aria-label="Правила и настройки"></button>
+    </div>
+    <nav id="reels" aria-label="Ролики"></nav>
+  </aside>
+
+  <main>
+    <div class="stagewrap">
+      <div class="stage" id="stage">
+        <video id="v" preload="auto" playsinline></video>
+        <video class="pv" id="pvv" loop playsinline hidden></video>
+        <canvas id="cv"></canvas>
+        <button class="pvtag" id="pvtag" hidden title="Сейчас показан кадр из кода — клик вернёт мастер · V"></button>
+        <input class="tin" id="tin" hidden aria-label="Текст на кадре">
+      </div>
+    </div>
+    <div class="timeline" id="tl" title="Шкала: клик — перейти к кадру, Shift + протяжка — выделить отрезок. Точки — пометки"><div class="ph" id="ph"></div></div>
+    <div class="toolbar">
+      <button class="icon ghost" id="play" data-icon="play" title="Пуск / пауза · Пробел" aria-label="Пуск"></button>
+      <span class="tc num" id="tc" title="Время в секундах и номер кадра мастера">—</span>
+      <button class="ghost rate num" id="rate" title="Скорость просмотра — клик замедляет: ½×, ¼×, 0.1×, снова 1× · ⇧< ⇧>" aria-label="Скорость просмотра">1×</button>
+      <div class="seg" id="tools" role="toolbar" aria-label="Отметки на кадре">
+        <button data-tool="point" data-icon="point" title="Точка — отметить место на кадре · P" aria-label="Точка"></button>
+        <button data-tool="rect" data-icon="rect" title="Рамка — обвести то, что поменять · R" aria-label="Рамка"></button>
+        <button data-tool="arrow" data-icon="arrow" title="Стрелка — куда сдвинуть или как должно двигаться · A" aria-label="Стрелка"></button>
+        <span class="gap"></span>
+        <button data-tool="pen" data-icon="pen" title="Кисть — эскиз новой графики от руки, Claude сделает по нему настоящую · B" aria-label="Кисть"></button>
+        <button data-tool="plate" data-icon="plate" title="Плашка — эскиз залитой плашки: место, размер, цвет · F" aria-label="Плашка"></button>
+        <button data-tool="text" data-icon="text" title="Текст — написать на кадре слова для новой графики · T" aria-label="Текст"></button>
+      </div>
+      <div class="swatches" id="swatches" hidden></div>
+      <div class="tright">
+      <button class="icon ghost" id="grid" data-icon="grid" title="Сетка кадра — зоны из настроек проекта · G" aria-label="Сетка кадра"></button>
+      <button class="icon ghost" id="pvbtn" data-icon="eye" title="Предпросмотр — этот кадр (или отрезок I–O) таким, каким он сейчас получается из кода, без рендера мастера. Около 5 секунд · V" aria-label="Предпросмотр из кода"></button>
+      </div>
+    </div>
+    <div class="tracks" id="tracks" hidden>
+      <div class="trlabels">
+        <span data-icon="scissors" title="Склейки — куски дублей в нарезке"></span>
+        <span data-icon="layers" title="Вставки — перебивки и графика из плана ролика"></span>
+        <span data-icon="captions" id="wordslabel" title="Слова субтитров — клик по слову, чтобы исправить опечатку"></span>
+        <span data-icon="wave" title="Звуки — тянуть блок, чтобы сдвинуть; громкость — в строке под дорожками"></span>
+        <button id="t-check" data-icon="alert" title="Проверка мастера: хвосты, вдохи, повторы, логотип, сведены ли звуки. Около 5 секунд · C" aria-label="Проверить мастер"></button>
+      </div>
+      <div class="trscroll" id="trscroll"><div class="trinner" id="trinner"></div></div>
+      <div class="insp" id="insp"></div>
+    </div>
+  </main>
+
+  <section class="side">
+    <header class="reelhead" id="reelhead" hidden>
+      <div class="title" id="rtitle"></div>
+      <select id="status" aria-label="Статус ролика"></select>
+      <button class="icon ghost" id="del" data-icon="trash" title="Удалить мастер или весь ролик в Корзину · ⌘⌫" aria-label="Удалить"></button>
+    </header>
+
+    <div class="claude" id="claudebox" hidden>
+      <div class="chead">
+        <span class="dot" id="cdot"></span><b>Claude</b><span class="dim small" id="cstate"></span>
+        <span class="grow"></span>
+        <button class="icon ghost" id="c-stop" data-icon="stop" hidden title="Остановить Claude" aria-label="Остановить Claude"></button>
+        <button class="icon ghost" id="c-new" data-icon="refresh" title="Новая сессия — Claude забудет разговор об этом ролике" aria-label="Новая сессия Claude"></button>
+      </div>
+      <div class="cacts">
+        <button class="primary" id="c-notes" hidden title="Claude внесёт все ждущие пометки и покажет «после» из кода"></button>
+        <button id="c-varshow" hidden title="Открыть три варианта и выбрать один">Выбрать вариант</button>
+        <button id="c-rules" hidden title="Claude предложит строки в правила из принятых и возвращённых пометок; записываете вы"></button>
+        <button class="primary" id="apply" data-icon="toMaster" hidden><span>В мастер</span></button>
+        <button id="c-build" title="Собрать версию — полный рендер, мастер звука, звуки и проверка. Несколько минут">Собрать версию</button>
+      </div>
+      <div class="feed" id="feed" aria-live="polite"></div>
+    </div>
+
+    <div class="composer" id="composer" hidden>
+      <textarea id="txt" placeholder="Что поменять?" aria-label="Пометка или задание Claude"></textarea>
+      <div class="ctx" id="where"></div>
+      <div class="cbtns">
+        <button class="primary" id="add" title="Добавить пометку на этот кадр · ⌘Enter">Добавить</button>
+        <button id="addgo" title="Добавить и сразу отдать Claude в работу · ⌘⇧Enter">Сделать</button>
+        <button id="addvar" title="Три варианта — Claude сделает их по тексту, вы выберете по кадрам · ⌘⌥Enter">3 варианта</button>
+      </div>
+    </div>
+
+    <div id="notes"></div>
+  </section>
+</div>
+
+<dialog id="dlg"></dialog>
+<dialog id="vardlg" class="wide"><form method="dialog">
+  <div style="display:flex;align-items:center;gap:8px"><h2 id="vartitle" class="grow"></h2><button value="base" id="varbase">Оставить как было</button><button value="close" class="icon ghost" data-icon="x" aria-label="Закрыть"></button></div>
+  <div class="vargrid" id="vargrid"></div>
+</form></dialog>
+<dialog id="picdlg" class="pic"><form method="dialog"><button value="close" style="all:unset;cursor:zoom-out" id="picbtn" aria-label="Закрыть"></button></form></dialog>
+<div id="toast" role="status"></div>
+
+<script>
+// ---------- иконки: свои SVG, один штрих ----------
+const ICONS = {
+  play: '<path d="M8 5.5v13l10.5-6.5z" fill="currentColor" stroke="none"/>',
+  pause: '<rect x="7" y="5.5" width="3.6" height="13" rx="1" fill="currentColor" stroke="none"/><rect x="13.4" y="5.5" width="3.6" height="13" rx="1" fill="currentColor" stroke="none"/>',
+  point: '<circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/>',
+  rect: '<rect x="4.5" y="6.5" width="15" height="11" rx="1"/>',
+  arrow: '<path d="M5 19L19 5M10 5h9v9"/>',
+  pen: '<path d="M3 15c2-5 4-5 6 0s4 5 6 0 4-5 6 0"/>',
+  plate: '<rect x="4" y="8" width="16" height="8" rx="3" fill="currentColor" stroke="none"/>',
+  text: '<path d="M6 6h12M12 6v13"/>',
+  grid: '<rect x="5" y="3" width="14" height="18" rx="1.5"/><rect x="8" y="6.5" width="8" height="10" rx=".5" stroke-dasharray="2 2"/>',
+  eye: '<path d="M2.5 12s3.5-6.5 9.5-6.5 9.5 6.5 9.5 6.5-3.5 6.5-9.5 6.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.8"/>',
+  keyboard: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h.01M11 10h.01M15 10h.01M8 14h8"/>',
+  sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 12.5a1.5 1.5 0 0 0 1.5 1.5h7a1.5 1.5 0 0 0 1.5-1.5L18 7M9 7V4.5h6V7"/>',
+  refresh: '<path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5"/>',
+  stop: '<rect x="7" y="7" width="10" height="10" rx="1.5" fill="currentColor" stroke="none"/>',
+  scissors: '<circle cx="6.5" cy="7" r="2.5"/><circle cx="6.5" cy="17" r="2.5"/><path d="M8.6 8.4L20 18M8.6 15.6L20 6"/>',
+  layers: '<path d="M12 4l8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4"/><path d="M4 16l8 4 8-4"/>',
+  captions: '<rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="M7 14h5M14 14h3M7 10.5h10"/>',
+  wave: '<path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/>',
+  alert: '<path d="M12 4l9 16H3z"/><path d="M12 10v4M12 17.2h.01"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  toMaster: '<path d="M12 4v11M7.5 10.5L12 15l4.5-4.5M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3"/>',
+  minus: '<path d="M6 12h12"/>', plus: '<path d="M6 12h12M12 6v12"/>',
+};
+const icon = (n) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
+document.querySelectorAll("[data-icon]").forEach((el) => el.insertAdjacentHTML("afterbegin", icon(el.dataset.icon)));
+
+const STATUS = { new: "новая", reopened: "возвращена", done: "сделано", question: "вопрос", wontfix: "не будем", accepted: "принято" };
+const STATUSES = ["в работе", "сдан", "опубликован", "отложен", "не закончен"];
+const GRAPHIC = new Set(["pen", "plate", "text"]);
+const W = 1080, H = 1920;
+const $ = (s) => document.querySelector(s);
+const v = $("#v"), cv = $("#cv"), ctx = cv.getContext("2d");
+v.after(Object.assign(document.createElement("img"), { className: "pv", id: "pv", alt: "Кадр из текущего кода", hidden: true }));
+const S = { reels: [], reel: null, fps: 30, dur: 0, doc: { notes: [] }, docJson: "", tool: "point",
+  draft: [], range: [null, null], grid: false, sel: null, drag: null, reopen: null, color: "#ffd400", colors: {},
+  pv: null, feed: [], feedN: 0, job: null, session: null };
+
+const api = async (path, body) => {
+  const r = await fetch(path, body ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {});
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || r.status);
+  return r.json();
+};
+const media = (p) => "/media/" + p.split("/").map(encodeURIComponent).join("/");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const frame = () => Math.floor(v.currentTime * S.fps + 1e-4);
+const nframes = () => Math.max(1, Math.round(S.dur * S.fps));
+const seek = (f) => { f = Math.max(0, Math.min(nframes() - 1, f)); v.currentTime = (f + 0.5) / S.fps; };
+const secs = (f) => (f / S.fps).toFixed(2);
+const plural = (n, one, few, many) => n % 10 === 1 && n % 100 !== 11 ? one : [2, 3, 4].includes(n % 10) && ![12, 13, 14].includes(n % 100) ? few : many;
+const mb = (n) => n > 1e9 ? (n / 1e9).toFixed(1) + " ГБ" : Math.max(0.1, n / 1e6).toFixed(1) + " МБ";
+const reelArgs = () => ({ brand: S.reel.brand, id: S.reel.id });
+const q = (o) => new URLSearchParams(o).toString();
+
+// ---------- уведомления и окна (нативный <dialog>: Esc, фокус, фон) ----------
+function toast(t, err) {
+  const el = $("#toast"); el.textContent = t; el.className = "show" + (err ? " err" : "");
+  clearTimeout(toast.t); toast.t = setTimeout(() => (el.className = err ? "err" : ""), err ? 6000 : 1800);
+}
+const flash = (t) => toast(t);
+const fail = (e) => toast(String(e?.message || e), true);
+function ask({ title, body = "", ok = "Да", danger = false }) {
+  const d = $("#dlg");
+  // «ок» первым в разметке — Enter в поле подтверждает; у удаления фокус на «Отмене»
+  d.innerHTML = `<form method="dialog"><h2>${esc(title)}</h2>${body ? `<div class="dbody">${body}</div>` : ""}
+    <div class="dbtns"><button value="ok" class="${danger ? "danger" : "primary"}">${esc(ok)}</button><button value="cancel" formnovalidate>Отмена</button></div></form>`;
+  d.returnValue = "";
+  d.showModal();
+  (danger ? d.querySelector("[value=cancel]") : d.querySelector("input:not([type=radio]), textarea") || d.querySelector("[value=ok]")).focus();
+  return new Promise((res) => d.addEventListener("close", () =>
+    res(d.returnValue === "ok" ? Object.fromEntries(new FormData(d.querySelector("form"))) : null), { once: true }));
+}
+const anyDialog = () => document.querySelector("dialog[open]");
+
+// ---------- ролики ----------
+async function loadReels() {
+  S.reels = await api("/api/reels");
+  if (S.reel) {
+    const fresh = S.reels.find((r) => r.path === S.reel.path);
+    if (fresh && fresh.mtime !== S.reel.mtime) {  // новый мастер (сборка, «в мастер»): тот же кадр, новое видео
+      const f = frame(); S.reel = fresh;
+      v.addEventListener("loadedmetadata", () => { S.dur = v.duration || S.dur; seek(f); loadTracks(); }, { once: true });
+      v.src = media(fresh.path) + "?v=" + fresh.mtime;
+      flash("новый мастер");
+    } else if (fresh) S.reel = fresh;
+  }
+  drawReels(); drawHead();
+}
+function drawReels() {
+  const qs = $("#filter").value.trim().toLowerCase();
+  const byBrand = {};
+  for (const r of S.reels) {
+    if (qs && !(r.id + " " + r.brand + " " + r.file + " " + r.status).toLowerCase().includes(qs)) continue;
+    (byBrand[r.brand] ??= []).push(r);
+  }
+  $("#reels").innerHTML = Object.entries(byBrand).map(([b, rs]) => `<h2>${esc(b)}</h2>` + rs.map((r) => {
+    const cur = S.reel && S.reel.path === r.path ? " cur" : "";
+    const d = new Date(r.mtime * 1000).toLocaleString("ru", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+    const badge = r.waiting ? `<span class="badge wait" title="ждут Claude">${r.waiting}</span>`
+      : r.answered ? `<span class="badge ans" title="Claude ответил">${r.answered}</span>` : r.notes ? `<span class="badge">${r.notes}</span>` : "";
+    return `<div class="reel${cur}" data-path="${esc(r.path)}" title="${esc(r.file)} · ${d}"><span class="name">${esc(r.file.replace(/\.mp4$/, ""))}</span><span class="meta">${esc(r.status)}</span>${badge}</div>`;
+  }).join("")).join("") || `<div class="dim small" style="padding:8px">Мастеров нет</div>`;
+}
+$("#reels").addEventListener("click", (e) => { const el = e.target.closest(".reel"); if (el) openReel(S.reels.find((r) => r.path === el.dataset.path)); });
+$("#filter").addEventListener("input", drawReels);
+
+// ---------- отмена: ⌘Z возвращает последнее действие на этом ролике ----------
+const UNDO = [];
+function undoable(label, undo) { UNDO.push({ label, undo }); if (UNDO.length > 200) UNDO.shift(); }
+async function undoLast() {
+  const u = UNDO.pop();
+  if (!u) return flash("отменять нечего");
+  try { await u.undo(); flash("отменено: " + u.label); } catch (e) { fail(e); }
+}
+function addShape(s) {
+  S.draft.push(s);
+  undoable("отметка", () => { const i = S.draft.lastIndexOf(s); if (i >= 0) S.draft.splice(i, 1); draw(); where(); });
+  draw(); where();
+}
+function setRange(r, prev = S.range.slice()) {
+  S.range = r; drawTimeline(); where();
+  undoable("отрезок", () => { S.range = prev; drawTimeline(); where(); });
+}
+
+// ---------- шапка ролика: статус (таблица роликов, отметки публикации, память) и удаление ----------
+function drawHead() {
+  const r = S.reel;
+  $("#reelhead").hidden = $("#claudebox").hidden = $("#composer").hidden = !r;
+  if (!r) return;
+  $("#status").hidden = !S.feat?.status;
+  $("#grid").hidden = !(S.feat?.grid || []).length;  // сетки нет в настройках — нет и кнопки  // без таблицы статусов в настройках проекта — без статуса
+  const file = r.file.replace(/\.mp4$/, "");
+  $("#rtitle").innerHTML = esc(r.key) + `<span>${esc([file !== r.key && file, r.version].filter(Boolean).join(" · "))}</span>`;
+  const sel = $("#status");
+  if (document.activeElement !== sel) {
+    sel.innerHTML = (r.status ? "" : `<option value="">без статуса</option>`) + STATUSES.map((s) => `<option>${s}</option>`).join("");
+    sel.value = r.status || "";
+    const p = r.published || {};
+    sel.title = r.status === "опубликован" ? [p["Опубликован"], p["Ссылка"], p["Результат"]].filter(Boolean).join(" · ") : "Статус в таблице роликов";
+  }
+  $("#pvbtn").disabled = !r.preview;
+  $("#c-notes").hidden = !r.waiting;
+  $("#c-notes").textContent = `Внести ${r.waiting} ${plural(r.waiting, "пометку", "пометки", "пометок")}`;
+}
+$("#status").addEventListener("change", async (e) => {
+  const s = e.target.value, r = S.reel;
+  let body = { status: s };
+  if (s === "опубликован") {
+    const p = r.published || {};
+    const date = /^\d{1,2}\.\d{1,2}(\.\d{2,4})?$/.test(p["Опубликован"] || "") ? p["Опубликован"] : new Date().toLocaleDateString("ru", { day: "2-digit", month: "2-digit" });
+    const got = await ask({ title: `${r.key} опубликован`, ok: "Отметить", body:
+      `<input name="link" placeholder="Ссылка" value="${esc(p["Ссылка"] || "")}" aria-label="Ссылка на публикацию">
+       <input name="date" placeholder="Дата" value="${esc(date)}" aria-label="Дата публикации">
+       <input name="result" placeholder="Просмотры, заявки" value="${esc(p["Результат"] || "")}" aria-label="Результат">
+       <span class="small">После следующего ответа Claude рабочие файлы ролика уйдут в Корзину; мастер и тексты останутся.</span>` });
+    if (!got) return drawHead(e.target.value = r.status || "");
+    body = { ...body, ...got };
+  } else if (r.status === "опубликован" && !(await ask({ title: `Снять отметку публикации ${r.key}?`, ok: "Снять",
+      body: "Отметка публикации будет снята. Файлы, уже унесённые в Корзину, вернуть оттуда вручную." }))) {
+    return (e.target.value = r.status);
+  }
+  try { await api("/api/status", { ...reelArgs(), ...body }); e.target.blur(); await loadReels(); flash("статус записан"); } catch (err) { fail(err); }
+});
+
+async function delReel() {
+  const r = S.reel; if (!r) return;
+  try {
+    const base = { ...reelArgs(), file: r.file, dry: true };
+    const [f, all] = await Promise.all([api("/api/reel/delete", { ...base, scope: "file" }), api("/api/reel/delete", { ...base, scope: "reel" })]);
+    const size = (p) => mb(p.items.reduce((s, i) => s + i.size, 0));
+    const list = (p) => p.items.map((i) => esc(i.path.split("/").slice(-2).join("/"))).join(", ");
+    const got = await ask({ title: "Удалить в Корзину", ok: "Удалить", danger: true, body:
+      `<label class="opt"><input type="radio" name="scope" value="file" checked><span>Мастер ${esc(r.file)}</span><span class="num">${size(f)}</span></label>
+       <label class="opt"><input type="radio" name="scope" value="reel"><span>Весь ролик ${esc(r.id)}</span><span class="num">${size(all)}</span>
+         <small>${list(all)}${all.row ? ", строка в таблице роликов" : ""}${all.keep.length ? ` · код остаётся: ${esc(all.keep.join(", "))}` : ""}</small></label>` });
+    if (!got) return;
+    await api("/api/reel/delete", { ...reelArgs(), file: r.file, scope: got.scope, dry: false });
+    toast("в Корзине — вернуть можно оттуда");
+    S.reel = null; v.removeAttribute("src"); v.load(); hidePreview(); $("#tracks").hidden = true; $("#notes").innerHTML = "";
+    history.replaceState(null, "", "#"); drawHead(); await loadReels();
+  } catch (e) { fail(e); }
+}
+$("#del").onclick = delReel;
+$("#openrules").onclick = () => window.open("/rules", "reel-rules", "width=1150,height=900");
+
+async function openReel(r, atFrame) {
+  if (!r) return;
+  UNDO.length = 0;  // отмена — в пределах ролика
+  S.reel = r; S.draft = []; S.range = [null, null]; S.sel = null; S.feed = []; S.feedN = 0; $("#feed").innerHTML = "";
+  hidePreview(); drawHead(); drawSwatches(); loadFeed();
+  const info = await api("/api/info?" + q({ path: r.path }));
+  S.fps = info.fps || 30; S.dur = info.dur;
+  T.sel = null; T.data = null; $("#tracks").hidden = true; $("#vardlg").open && $("#vardlg").close();
+  // обработчик — до src: из кэша метаданные приходят раньше, чем закончится loadNotes, и событие терялось
+  v.addEventListener("loadedmetadata", () => { S.dur = v.duration || S.dur; seek(atFrame ?? 0); loadTracks(); loadVariants(false); }, { once: true });
+  v.src = media(r.path) + "?v=" + r.mtime;
+  history.replaceState(null, "", `#${encodeURIComponent(r.brand)}/${encodeURIComponent(r.file)}`);
+  await loadNotes();
+  drawReels(); where();
+}
+
+// ---------- пометки ----------
+async function loadNotes() {
+  if (!S.reel) return;
+  const doc = await api("/api/notes?" + q(reelArgs()));
+  const j = JSON.stringify(doc);
+  if (j === S.docJson) return;
+  S.doc = doc; S.docJson = j;
+  drawNotes(); draw(); drawTimeline();
+}
+async function saveNote(note) {
+  const doc = await api("/api/note", { ...reelArgs(), note });
+  S.doc = doc; S.docJson = JSON.stringify(doc);
+  drawNotes(); draw(); drawTimeline();
+  loadReels();
+}
+async function addNote(go) {
+  if (!S.reel) return;
+  const text = $("#txt").value.trim();
+  if (!text && !S.draft.length) { $("#txt").focus(); return flash("напишите, что поменять"); }
+  const range = S.range[0] != null && S.range[1] != null ? [Math.min(...S.range), Math.max(...S.range)] : null;
+  const f = range ? range[0] : frame();
+  // вид пометки — из того, что на кадре: эскиз графики, отрезок или просто место
+  const kind = S.draft.some((s) => s.kind === "g") ? "draw" : range ? "timing" : "other";
+  const id = "n" + Date.now().toString(36), draft = S.draft, prevRange = S.range;
+  try {
+    await saveNote({ id, master: S.reel.file, master_path: S.reel.path, master_mtime: S.reel.mtime,
+      fps: S.fps, frame: f, t: +(f / S.fps).toFixed(3), range, kind, shapes: S.draft.map(({ kind, ...s }) => s), text, status: "new" });
+  } catch (e) { return fail(e); }
+  clearDraft(false); $("#txt").value = "";
+  undoable("пометка", async () => {  // убрать пометку и вернуть в поле текст и отметки
+    await removeNote(id);
+    if (!$("#txt").value.trim()) $("#txt").value = text;
+    S.draft = draft; S.range = prevRange; drawTimeline(); draw(); where();
+  });
+  if (go) runClaude("notes"); else flash("пометка добавлена");
+}
+async function addVariants() {
+  const t = $("#txt").value.trim();
+  if (!t) { $("#txt").focus(); return flash("напишите, что сделать в трёх вариантах"); }
+  if (await runClaude("variants", t)) { $("#txt").value = ""; clearDraft(false); }
+}
+function clearDraft(record = true) {
+  if (record && (S.draft.length || S.range[0] != null)) {
+    const draft = S.draft, range = S.range;
+    undoable("сброс отметок", () => { S.draft = draft; S.range = range; drawTimeline(); draw(); where(); });
+  }
+  S.draft = []; S.range = [null, null]; drawTimeline(); draw(); where();
+}
+function where() {
+  if (!S.reel) return;
+  const f = frame(), [a, b] = S.range, n = S.draft.length;
+  const place = a != null ? `<span class="chip range num" title="Пометка ляжет на этот отрезок кадров (I / O)">${Math.min(a, b ?? a)}–${b != null ? Math.max(a, b) : "…"}</span>`
+    : `<span class="chip num" title="Пометка ляжет на этот кадр">кадр ${f}</span>`;
+  const html = place + (n ? `<span class="chip">${n} ${plural(n, "отметка", "отметки", "отметок")}</span>` : "")
+    + (n || a != null ? `<button class="ghost" id="clearbtn" title="Сбросить отметки и отрезок · X" aria-label="Сбросить отметки">${icon("x")}</button>` : "");
+  if (html !== where.last) $("#where").innerHTML = where.last = html;  // tick зовёт каждый кадр — перерисовывать только при смене
+}
+$("#where").addEventListener("click", (e) => e.target.closest("#clearbtn") && clearDraft());
+
+function drawNotes() {  // перерисовка не теряет набранное в «Вернуть» и в тексте правила
+  const keep = [...document.querySelectorAll("#notes textarea")].map((t) => [t.dataset.reopen ? "reopen:" + t.dataset.reopen : "rule:" + t.dataset.rule, t.value, document.activeElement === t]);
+  drawNotesNow();
+  for (const [k, val, focus] of keep) {
+    const [kind, id] = k.split(":");
+    const t = document.querySelector(`#notes textarea[data-${kind}="${id}"]`);
+    if (t) { t.value = val; if (focus) t.focus(); }
+  }
+  drawRulesBtn();
+}
+function ruleBox(n) {
+  const r = n.rule;
+  if (!r) return "";
+  if (r.status === "proposed") return `<div class="rule"><span class="small dim">Правило → ${esc(r.file.replace(/\/brands\/[^/]+\//, " / "))}</span>
+    <textarea data-rule="${n.id}">${esc(r.text)}</textarea>
+    <div class="acts" style="margin:0"><button class="primary" data-act="rule-ok" data-id="${n.id}" title="Дописать это правило в файл">Записать</button><button data-act="rule-no" data-id="${n.id}" title="Не записывать">Не надо</button></div></div>`;
+  if (r.status === "written") return `<div class="small" style="color:var(--ok);margin-top:6px">правило записано</div>`;
+  return "";
+}
+const ruleCandidates = () => (S.doc.notes || []).filter((n) => (n.status === "accepted" || n.returned) && !n.rule).length;
+function drawRulesBtn() { const k = ruleCandidates(); $("#c-rules").hidden = !k; $("#c-rules").textContent = `Правила из правок · ${k}`; }
+function drawNotesNow() {
+  const ns = S.doc.notes || [];
+  $("#notes").innerHTML = ns.map((n) => {
+    const other = n.master !== S.reel.file ? `<div class="other">к файлу ${esc(n.master)}</div>` : "";
+    const thread = (n.thread || []).map((m) => `<div><b>${m.who === "claude" ? "Claude" : "Вы"}:</b> ${esc(m.text)}</div>`).join("");
+    const pic = (k, label) => n[k] ? `<figure><img src="${media(n[k])}?v=${encodeURIComponent(n.updated || "")}" data-zoom="1" alt="Кадр ${label}"><figcaption>${label}</figcaption></figure>` : "";
+    const clip = n.after_clip ? `<figure style="grid-column:1/-1"><video src="${media(n.after_clip)}?v=${encodeURIComponent(n.updated || "")}" controls loop playsinline></video></figure>` : "";
+    const pics = n.before || n.after ? `<div class="pics">${pic("before", "до")}${pic("after", n.after_src === "preview" ? "после · из кода" : "после")}${clip}</div>` : "";
+    const answered = ["done", "question", "wontfix"].includes(n.status);
+    const acts = S.reopen === n.id
+      ? `<textarea data-reopen="${n.id}" placeholder="Что не так?" style="margin-top:8px"></textarea><div class="acts"><button class="primary" data-act="send" data-id="${n.id}">Вернуть</button><button data-act="cancel">Отмена</button></div>`
+      : answered ? `<div class="acts"><button data-act="accept" data-id="${n.id}" title="Правка устраивает">Принять</button><button data-act="reopen" data-id="${n.id}" title="Вернуть Claude с комментарием">${n.status === "question" ? "Ответить" : "Вернуть"}</button></div>` : "";
+    const when = n.range ? `${secs(n.range[0])}–${secs(n.range[1])} с` : `${(+n.t).toFixed(2)} с`;
+    return `<article class="note${S.sel === n.id ? " sel" : ""}" data-id="${n.id}">
+      <header><span class="st ${n.status}">${STATUS[n.status] || n.status}</span><span class="num" title="кадр ${n.frame}">${when}</span>${n.returned ? `<span>↺ ${n.returned}</span>` : ""}
+        <button class="icon ghost" data-act="del" data-id="${n.id}" title="Удалить пометку · ⌫" aria-label="Удалить пометку">${icon("trash")}</button></header>
+      ${other}${n.text ? `<div class="tx">${esc(n.text)}</div>` : ""}${thread ? `<div class="thread">${thread}</div>` : ""}${pics}${ruleBox(n)}${acts}</article>`;
+  }).join("");
+}
+async function removeNote(id) {
+  const doc = await api("/api/note/delete", { ...reelArgs(), note_id: id });
+  S.doc = doc; S.docJson = JSON.stringify(doc); if (S.sel === id) S.sel = null;
+  drawNotes(); draw(); drawTimeline(); loadReels();
+}
+async function delNote(id) {
+  const n = S.doc.notes.find((x) => x.id === id); if (!n) return;
+  if (!(await ask({ title: "Удалить пометку?", ok: "Удалить", danger: true, body: n.text ? `«${esc(n.text.slice(0, 120))}»` : "" }))) return;
+  try { await removeNote(id); undoable("удаление пометки", () => saveNote(structuredClone(n))); } catch (e) { fail(e); }
+}
+$("#notes").addEventListener("click", async (e) => {
+  const img = e.target.closest("img[data-zoom]");
+  if (img) { $("#picbtn").innerHTML = `<img src="${img.src}" alt="${esc(img.alt)} крупно">`; return $("#picdlg").showModal(); }
+  const b = e.target.closest("button[data-act]");
+  if (b) {
+    const id = b.dataset.id, act = b.dataset.act;
+    try {
+      if (act === "accept") {
+        const prev = S.doc.notes.find((x) => x.id === id)?.status;
+        await saveNote({ id, status: "accepted" });
+        undoable("принятие", () => saveNote({ id, status: prev }));
+      }
+      if (act === "reopen") { S.reopen = id; drawNotes(); document.querySelector(`[data-reopen="${id}"]`)?.focus(); }
+      if (act === "cancel") { S.reopen = null; drawNotes(); }
+      if (act === "send") {
+        const t = document.querySelector(`[data-reopen="${id}"]`).value.trim();
+        if (!t) return;
+        S.reopen = null;
+        await saveNote({ id, status: "reopened", append: { who: "user", text: t } });
+      }
+      if (act === "rule-ok" || act === "rule-no") {
+        const text = document.querySelector(`#notes textarea[data-rule="${id}"]`)?.value;
+        const doc = await api(act === "rule-ok" ? "/api/rule/accept" : "/api/rule/dismiss", { ...reelArgs(), note_id: id, text });
+        S.doc = doc; S.docJson = JSON.stringify(doc); drawNotes();
+        if (act === "rule-ok") flash("записано в правила");
+      }
+      if (act === "del") await delNote(id);
+    } catch (err) { fail(err); }
+    return;
+  }
+  if (e.target.closest("textarea, .rule")) return;
+  const card = e.target.closest(".note");
+  if (card) selectNote(card.dataset.id);
+});
+function selectNote(id) {
+  const n = S.doc.notes.find((x) => x.id === id); if (!n) return;
+  S.sel = id; v.pause(); seek(n.frame); drawNotes();
+  document.querySelector(`.note[data-id="${id}"]`)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+function stepNote(dir) {  // ↑ ↓ — к предыдущей и следующей пометке этого мастера
+  const ns = (S.doc.notes || []).filter((n) => n.master === S.reel?.file);
+  if (!ns.length) return;
+  const f = frame(), i = ns.findIndex((n) => n.id === S.sel);
+  const next = i >= 0 ? ns[Math.max(0, Math.min(ns.length - 1, i + dir))]
+    : dir > 0 ? ns.find((n) => n.frame > f) || ns[ns.length - 1] : [...ns].reverse().find((n) => n.frame < f) || ns[0];
+  selectNote(next.id);
+}
+
+// ---------- рисование на кадре ----------
+function toFrame(e) {
+  const r = cv.getBoundingClientRect();
+  return { x: Math.round(((e.clientX - r.left) / r.width) * W), y: Math.round(((e.clientY - r.top) / r.height) * H) };
+}
+cv.addEventListener("mousedown", (e) => {
+  if (!S.reel) return;
+  v.pause(); hidePreview();
+  const p = toFrame(e);
+  if (S.tool === "point") return addShape({ type: "point", ...p });
+  if (S.tool === "text") { e.preventDefault(); return textAt(e, p); }  // иначе щелчок сразу снимает фокус с поля
+  S.drag = { x0: p.x, y0: p.y, x1: p.x, y1: p.y, pts: S.tool === "pen" ? [[p.x, p.y]] : null };
+});
+function textAt(e, p) {  // текст эскиза вводится прямо на кадре
+  const tin = $("#tin"), st = $("#stage").getBoundingClientRect(), k = st.width / W, size = 64;
+  Object.assign(tin.style, { left: e.clientX - st.left + "px", top: e.clientY - st.top + "px", fontSize: size * k + "px", color: S.color });
+  tin.value = ""; tin.hidden = false; tin.dataset.x = p.x; tin.dataset.y = p.y;
+  tin.focus();  // сразу: mousedown отменён, фокус никто не уведёт, и первые буквы не теряются
+}
+function textDone(keep) {
+  const tin = $("#tin"); if (tin.hidden) return;
+  const t = tin.value.trim(); tin.hidden = true;
+  if (keep && t) addShape({ type: "text", x: +tin.dataset.x, y: +tin.dataset.y, text: t, size: 64, color: S.color, kind: "g" });
+  else draw();
+}
+$("#tin").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter") textDone(true); if (e.key === "Escape") textDone(false); });
+$("#tin").addEventListener("blur", () => textDone(true));
+window.addEventListener("mousemove", (e) => {
+  const d = S.drag; if (!d) return;
+  const p = toFrame(e); d.x1 = p.x; d.y1 = p.y;
+  if (d.pts) { const [lx, ly] = d.pts[d.pts.length - 1]; if (Math.hypot(p.x - lx, p.y - ly) >= 4) d.pts.push([p.x, p.y]); }
+  draw();
+});
+window.addEventListener("mouseup", () => {
+  const d = S.drag; S.drag = null;
+  if (!d) return;
+  const box = { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
+  const small = Math.hypot(d.x1 - d.x0, d.y1 - d.y0) < 12;
+  if (d.pts) { if (d.pts.length > 1) addShape({ type: "pen", pts: d.pts, w: 8, color: S.color, kind: "g" }); else draw(); }
+  else if (small) addShape({ type: "point", x: d.x0, y: d.y0 });
+  else if (S.tool === "plate" && Math.min(box.w, box.h) >= 12) addShape({ type: "rect", ...box, fill: true, color: S.color, kind: "g" });
+  else if (S.tool === "rect" && Math.min(box.w, box.h) >= 12) addShape({ type: "rect", ...box });
+  else addShape({ type: "arrow", x1: d.x0, y1: d.y0, x2: d.x1, y2: d.y1 });
+});
+function shape(s, color, k, label) {
+  ctx.strokeStyle = ctx.fillStyle = color; ctx.lineWidth = 3 * devicePixelRatio;
+  if (s.type === "pen") {
+    ctx.lineWidth = Math.max(2, (s.w || 8) * k); ctx.lineJoin = ctx.lineCap = "round";
+    ctx.beginPath(); s.pts.forEach(([x, y], i) => (i ? ctx.lineTo(x * k, y * k) : ctx.moveTo(x * k, y * k))); ctx.stroke();
+  }
+  if (s.type === "text") { ctx.font = `700 ${(s.size || 64) * k}px -apple-system, sans-serif`; ctx.textBaseline = "top"; ctx.fillText(s.text, s.x * k, s.y * k); ctx.textBaseline = "alphabetic"; }
+  if (s.type === "rect" && s.fill) { ctx.beginPath(); ctx.roundRect(s.x * k, s.y * k, s.w * k, s.h * k, 24 * k); ctx.fill(); }
+  if (s.type === "point") { ctx.beginPath(); ctx.arc(s.x * k, s.y * k, 14 * devicePixelRatio, 0, 7); ctx.stroke(); ctx.beginPath(); ctx.arc(s.x * k, s.y * k, 3 * devicePixelRatio, 0, 7); ctx.fill(); }
+  if (s.type === "rect" && !s.fill) ctx.strokeRect(s.x * k, s.y * k, s.w * k, s.h * k);
+  if (s.type === "arrow") {
+    const [x1, y1, x2, y2] = [s.x1 * k, s.y1 * k, s.x2 * k, s.y2 * k], a = Math.atan2(y2 - y1, x2 - x1), h = 14 * devicePixelRatio;
+    ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x2, y2); ctx.lineTo(x2 - h * Math.cos(a - .45), y2 - h * Math.sin(a - .45)); ctx.lineTo(x2 - h * Math.cos(a + .45), y2 - h * Math.sin(a + .45)); ctx.fill();
+  }
+  if (label) {
+    const x = (s.x ?? s.x1 ?? s.pts[0][0]) * k, y = (s.y ?? s.y1 ?? s.pts[0][1]) * k - 8 * devicePixelRatio;
+    ctx.fillStyle = color; ctx.font = `${12 * devicePixelRatio}px -apple-system, sans-serif`; ctx.fillText(label, x, y);
+  }
+}
+function draw() {
+  const r = cv.getBoundingClientRect();
+  cv.width = r.width * devicePixelRatio; cv.height = r.height * devicePixelRatio;
+  const k = cv.width / W;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (S.grid) {  // зоны — из настроек проекта (grid в .reel-review.json)
+    ctx.lineWidth = 2 * devicePixelRatio;
+    for (const z of S.feat?.grid || []) {
+      const [x, y, w, h] = z.rect.map((n) => n * k);
+      ctx.strokeStyle = ctx.fillStyle = z.color || "lime";
+      if (z.fill) { ctx.globalAlpha = .3; ctx.fillRect(x, y, w, h); ctx.globalAlpha = 1; } else ctx.strokeRect(x, y, w, h);
+    }
+  }
+  if (!S.reel) return;
+  const f = frame();
+  for (const n of S.doc.notes || []) {
+    const here = n.range ? f >= n.range[0] && f <= n.range[1] : Math.abs(f - n.frame) <= 1;
+    if (!here || n.master !== S.reel.file) continue;
+    const col = n.id === S.sel ? "#ffffff" : n.status === "done" || n.status === "accepted" ? "#3ccf7e" : "#ff5a36";
+    (n.shapes || []).forEach((s, i) => shape(s, s.color && n.id !== S.sel ? s.color : col, k, i === 0 ? n.text.slice(0, 40) : ""));
+  }
+  for (const s of S.draft) shape(s, s.color || "#ffd400", k);
+  const d = S.drag;
+  const box = d && { x: Math.min(d.x0, d.x1), y: Math.min(d.y0, d.y1), w: Math.abs(d.x1 - d.x0), h: Math.abs(d.y1 - d.y0) };
+  if (d) shape(d.pts ? { type: "pen", pts: d.pts, w: 8 } : S.tool === "rect" ? { type: "rect", ...box } : S.tool === "plate" ? { type: "rect", ...box, fill: true }
+    : { type: "arrow", x1: d.x0, y1: d.y0, x2: d.x1, y2: d.y1 }, d.pts || S.tool === "plate" ? S.color : "#ffd400", k);
+}
+function drawSwatches() {
+  const cs = [...new Set([...(S.colors[S.reel?.brand] || []), "#FFD400", "#FFFFFF", "#FF5A36"])];
+  $("#swatches").innerHTML = cs.map((c) => `<button class="sw${c.toLowerCase() === S.color.toLowerCase() ? " on" : ""}" data-c="${c}" style="background:${c}" title="Цвет эскиза ${c}" aria-label="Цвет ${c}"></button>`).join("");
+}
+$("#swatches").addEventListener("click", (e) => { if (e.target.dataset.c) { S.color = e.target.dataset.c; drawSwatches(); } });
+function setTool(t) {
+  S.tool = t; document.querySelectorAll("[data-tool]").forEach((b) => b.classList.toggle("on", b.dataset.tool === t));
+  $("#swatches").hidden = !GRAPHIC.has(t);  // цвет нужен только эскизу графики
+}
+$("#tools").addEventListener("click", (e) => { const b = e.target.closest("[data-tool]"); if (b) setTool(b.dataset.tool); });
+
+// ---------- предпросмотр из текущего кода (reels/stills.mjs, без рендера) ----------
+function hidePreview() { S.pv = null; $("#pv").hidden = $("#pvv").hidden = $("#pvtag").hidden = true; $("#pvv").pause(); }
+function showPreview() {
+  const p = S.pv; if (!p) return;
+  const url = media(p.path) + "?v=" + p.at;
+  if (p.clip) { $("#pvv").src = url; $("#pvv").hidden = false; $("#pvv").play(); $("#pv").hidden = true; }
+  else { $("#pv").src = url; $("#pv").hidden = false; $("#pvv").hidden = true; }
+  $("#pvtag").textContent = p.clip ? `код · ${p.range[0]}–${p.range[1]}` : `код · кадр ${p.frame}`;
+  $("#pvtag").hidden = false;
+}
+async function preview() {
+  if (!S.reel || !S.reel.preview || $("#pvbtn").classList.contains("spin")) return;
+  if (S.pv && !$("#pvtag").hidden) return hidePreview();  // V ещё раз — обратно к мастеру
+  const [a, b] = S.range;
+  const range = a != null && b != null ? [Math.min(a, b), Math.max(a, b)] : null;
+  const f = frame();
+  v.pause(); $("#pvbtn").classList.add("spin"); $("#stage").classList.add("busy");
+  try {
+    const r = await api("/api/preview", { ...reelArgs(), path: S.reel.path, ...(range ? { range } : { frame: f }) });
+    if (r.same) return toast(`Кадр ${f} в коде такой же, как в мастере`);
+    S.pv = { ...r, frame: f, range }; showPreview();
+    toast(range ? "Отрезок из кода — V вернёт мастер" : `Кадр ${f} в коде отличается от мастера — V вернёт мастер`);
+  }
+  catch (e) { fail("Предпросмотр: " + (e.message || e)); }
+  finally { $("#pvbtn").classList.remove("spin"); $("#stage").classList.remove("busy"); }
+}
+$("#pvbtn").onclick = preview;
+$("#pvtag").onclick = hidePreview;
+
+// ---------- Claude со страницы (jobs.py: claude -p, одна задача за раз) ----------
+function feedItem(it) {
+  const at = (it.at || "").slice(11, 16);
+  if (it.t === "start") return `<div class="meta">${at} · ${esc(it.text)}</div>`;
+  if (it.t === "text") return `<div class="txt">${esc(it.text)}</div>`;
+  if (it.t === "tool") return `<div class="tool">${esc(it.name)}${it.what ? " " + esc(it.what) : ""}</div>`;
+  if (it.t === "reset") return `<div class="meta">${at} · новая сессия</div>`;
+  if (it.t === "done") {
+    const m = [it.secs != null && `${Math.floor(it.secs / 60)}:${String(it.secs % 60).padStart(2, "0")}`, it.cost != null && `≈ $${(+it.cost).toFixed(2)} по ценам API`, it.denied && `запрещено: ${it.denied}`].filter(Boolean).join(" · ");
+    return `<div class="${it.error ? "err" : "ok"}">${it.stopped ? "Остановлено" : it.error ? "Ошибка" : "Готово"}${m ? " · " + m : ""}</div>${it.hint ? `<div class="err">${esc(it.hint)}</div>` : ""}${it.error && it.text && !it.hint ? `<div class="meta">${esc(it.text)}</div>` : ""}`;
+  }
+  return "";
+}
+async function loadFeed() {
+  if (!S.reel) return;
+  const r = S.reel, n0 = S.feedN;
+  const d = await api("/api/claude?" + q({ ...reelArgs(), since: n0 }));
+  if (!S.reel || S.reel.path !== r.path || S.feedN !== n0) return;  // ролик сменился или ответ уже учтён
+  S.job = d.job; S.session = d.session;
+  if (d.items.length) {
+    S.feed.push(...d.items); S.feedN = d.total;
+    const box = $("#feed"), atEnd = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+    box.innerHTML = S.feed.filter((x) => x.t !== "init").slice(-80).map(feedItem).join("");
+    if (atEnd || d.items.length === S.feed.length) box.scrollTop = box.scrollHeight;
+    if (d.items.some((x) => x.t === "done")) {
+      loadNotes(); loadReels(); loadTracks();
+      const last = [...S.feed].reverse().find((x) => x.t === "start");
+      loadVariants(last && last.mode === "variants");
+    }
+  }
+  const mine = d.job && d.job.id === r.id && d.job.brand === r.brand;
+  $("#cdot").className = "dot" + (d.job ? " run" : "");
+  $("#cstate").textContent = d.job ? (mine ? d.job.title.replace(/^Claude: /, "") : `занят: ${d.job.id}`) : "";
+  $("#c-stop").hidden = !(mine && d.job.kind === "claude");
+  ["#c-notes", "#c-build", "#addgo", "#addvar", "#c-rules", "#t-check", "#apply", "#c-new"].forEach((x) => ($(x).disabled = !!d.job));
+  $("#c-new").title = d.session ? `Новая сессия — Claude забудет разговор об этом ролике (сейчас claude --resume ${d.session})` : "Новая сессия — разговора об этом ролике ещё не было";
+}
+async function runClaude(mode, text = "") {
+  if (!S.reel) return false;
+  const [a, b] = S.range;
+  const ctx = { frame: frame(), file: S.reel.file, range: a != null && b != null ? [Math.min(a, b), Math.max(a, b)] : null };
+  try { await api("/api/claude", { ...reelArgs(), mode, text, ctx }); flash("Claude взялся"); loadFeed(); return true; }
+  catch (e) { fail(e); return false; }
+}
+$("#c-notes").onclick = () => runClaude("notes");
+$("#c-build").onclick = async () => (await ask({ title: `Собрать версию ${S.reel.id}?`, ok: "Собрать",
+  body: "Полный рендер, мастер звука, звуки и проверка — несколько минут." })) && runClaude("build");
+$("#c-stop").onclick = async () => { await api("/api/claude/stop", {}).catch(fail); loadFeed(); };
+$("#c-new").onclick = async () => {
+  if (!(await ask({ title: "Новая сессия Claude?", ok: "Начать", body: "Claude забудет разговор об этом ролике; старая сессия останется в истории Claude Code." }))) return;
+  try { await api("/api/claude/reset", reelArgs()); flash("следующий запуск — с чистого листа"); } catch (e) { fail(e); }
+  loadFeed();
+};
+$("#c-rules").onclick = () => runClaude("rules");
+
+// ---------- дорожки: склейки, вставки, слова, звуки, проверка (tracks.py) ----------
+const T = { data: null, zoom: 1, sel: null, drag: null, snd: null };
+const pct = (t) => (Math.max(0, t) / (S.dur || 1)) * 100 + "%";
+async function loadTracks() {
+  if (!S.reel || !S.dur) return;
+  const r = S.reel;
+  try { T.data = await api("/api/tracks?" + q({ ...reelArgs(), path: r.path })); } catch { T.data = null; }
+  if (!S.reel || S.reel.path !== r.path) return;
+  $("#tracks").hidden = !T.data;
+  drawTracks();
+}
+function trItem(cls, x, key, label, title) {
+  const w = Math.max((x.t1 ?? x.t0) - x.t0, 0.05);
+  return `<div class="it ${cls}${T.sel === key ? " sel" : ""}" data-k="${key}" style="left:${pct(x.t0)};width:${(w / S.dur) * 100}%" title="${esc(title)}">${esc(label)}</div>`;
+}
+function drawTracks() {
+  const d = T.data; if (!d) return;
+  $("#trinner").style.width = T.zoom * 100 + "%";
+  const edited = new Set(d.caption_edits.map((e) => e.start.toFixed(3)));
+  const chk = d.check ? d.check.items.filter((c) => c.level !== "ок") : [];
+  const lanes = [
+    d.cuts.map((c, i) => trItem("cut" + (i % 2 ? " alt" : ""), c, "cut:" + i, c.label, `${c.label} ${c.t0.toFixed(2)}–${c.t1.toFixed(2)} с — ${c.what}`)),
+    d.inserts.map((x, i) => trItem("ins", x, "ins:" + i, `${x.label} ${x.what}`, `${x.label} ${x.t0.toFixed(2)}–${x.t1.toFixed(2)} с — ${x.what}`)),
+    d.words.map((w) => trItem("word" + (edited.has(w.t0.toFixed(3)) ? " edited" : ""), w, "word:" + w.i, w.text, `${w.text} · ${w.t0.toFixed(2)} с`)),
+    d.sounds.map((x) => trItem("snd" + (x.missing ? " missing" : ""), x, "snd:" + x.i, x.what || x.file, `${x.t0.toFixed(2)} с — ${x.what || x.file}`)),
+    d.check ? d.check.items.map((c, i) => c.t0 == null || c.level === "ок" ? "" : trItem("chk" + (c.level === "ПРОВЕРИТЬ" ? " warn" : ""), { t0: c.t0, t1: Math.max(c.t1, c.t0 + 0.2) }, "chk:" + i, "!", c.text)) : [],
+  ];
+  $("#trinner").innerHTML = lanes.map((l, i) => `<div class="lane${i === 2 && !d.words_editable ? " ro" : ""}">${l.join("")}</div>`).join("") + `<div class="trph" id="trph"></div>`;
+  $("#wordslabel").title = d.words_editable ? "Слова субтитров — клик по слову, чтобы исправить опечатку" : "Слова субтитров — у этого ролика они в плане композиции, исправит Claude по пометке";
+  // проверка: счётчик на значке, бледный — если мастер новее проверки
+  const btn = $("#t-check"), errs = d.check ? d.check.errors : 0, n = chk.length;
+  btn.hidden = !d.can.check && !d.check;  // проверки нет в проекте — нет и значка
+  btn.querySelector(".cnt")?.remove();
+  if (d.check && n) btn.insertAdjacentHTML("beforeend", `<span class="cnt${errs ? " err" : ""}${d.check_stale ? " stale" : ""}">${n}</span>`);
+  btn.title = d.check ? `Проверка мастера — проверено ${d.check.at.slice(11, 16)}: ошибок ${errs}, проверить ${d.check.checks}${d.check_stale ? " · мастер новее" : ""} — клик, чтобы проверить заново · C` : "Проверка мастера: хвосты, вдохи, повторы, логотип, сведены ли звуки. Около 5 секунд · C";
+  // правки, которые ждут мастера: слова и звуки — одной кнопкой
+  const nc = d.can.patch ? d.caption_edits.length : 0, snd = d.sfx_pending && d.voice && d.can.sfx;
+  $("#apply").hidden = !(nc || snd);
+  $("#apply").title = "В мастер без Claude: " + [snd && "свести звуки", nc && `перерисовать субтитры: ${nc} ${plural(nc, "слово", "слова", "слов")}`].filter(Boolean).join(", ");
+  trPlayhead(); drawInsp();
+}
+function trPlayhead() {
+  const ph = $("#trph"); if (!ph || !S.dur) return;
+  ph.style.left = pct(v.currentTime);
+  const sc = $("#trscroll"), x = (v.currentTime / S.dur) * sc.scrollWidth;
+  if (T.zoom > 1 && (x < sc.scrollLeft || x > sc.scrollLeft + sc.clientWidth - 20)) sc.scrollLeft = x - sc.clientWidth / 3;
+}
+function trZoom(dir) { T.zoom = Math.max(1, Math.min(32, dir > 0 ? T.zoom * 2 : T.zoom / 2)); drawTracks(); }
+$("#trscroll").addEventListener("wheel", (e) => { if (e.ctrlKey || e.metaKey) { e.preventDefault(); trZoom(-e.deltaY); } }, { passive: false });
+const trTime = (e) => { const r = $("#trinner").getBoundingClientRect(); return ((e.clientX - r.left) / r.width) * S.dur; };
+function trFind(key) {
+  const [k, i] = key.split(":"), d = T.data;
+  return k === "cut" ? d.cuts[i] : k === "ins" ? d.inserts[i] : k === "word" ? d.words[i] : k === "snd" ? d.sounds.find((x) => x.i === +i) : d.check?.items[i];
+}
+$("#trinner").addEventListener("mousedown", (e) => {
+  if (!T.data) return;
+  const el = e.target.closest(".it");
+  v.pause();
+  if (!el) { T.sel = null; drawInsp(); return seek(Math.round(trTime(e) * S.fps)); }
+  const key = el.dataset.k, x = trFind(key);
+  T.sel = key;
+  if (key.startsWith("snd:")) { T.snd = { ...x }; T.drag = { x0: e.clientX, t0: x.t0, moved: false }; }
+  seek(Math.round((x.t0 ?? 0) * S.fps) + (key.startsWith("word:") ? 1 : 0));
+  drawTracks();
+  if (T.drag) T.drag.el = document.querySelector(`.it[data-k="${key}"]`);
+  if (key.startsWith("word:")) $("#w-text")?.select();
+});
+window.addEventListener("mousemove", (e) => {
+  const g = T.drag; if (!g || !g.el) return;
+  const dx = e.clientX - g.x0; if (Math.abs(dx) > 3) g.moved = true;
+  if (!g.moved) return;
+  T.snd.t0 = Math.max(0, Math.min(S.dur - 0.05, g.t0 + (dx / $("#trinner").getBoundingClientRect().width) * S.dur));
+  g.el.style.left = pct(T.snd.t0); if ($("#s-at")) $("#s-at").value = T.snd.t0.toFixed(2);
+});
+window.addEventListener("mouseup", () => { const g = T.drag; T.drag = null; if (g && g.moved) saveSound(); });
+function sndLevel(x) { return x.gain_db != null ? `${(+x.gain_db).toFixed(0)} дБ` : `−${(+(x.below_db ?? T.data.below_voice_db)).toFixed(0)} дБ к голосу`; }
+function drawInsp() {
+  const box = $("#insp"), d = T.data;
+  const x = T.sel && d && trFind(T.sel);
+  if (!x) { box.innerHTML = ""; return; }  // место под строкой остаётся: дорожки и кадр не прыгают
+  const [k] = T.sel.split(":");
+  const tm = `<span class="num dim">${x.t0?.toFixed(2)}${x.t1 != null && x.t1 !== x.t0 ? "–" + x.t1.toFixed(2) : ""} с</span>`;
+  if (k === "cut") box.innerHTML = `<b>${esc(x.label)}</b>${tm}<span class="what" title="${esc(x.what)}">${esc(x.what)}</span>`;
+  if (k === "ins") box.innerHTML = `<b>${esc(x.label)}</b>${tm}<span class="what" title="${esc(x.what)}">${esc(x.what)}</span>`;
+  if (k === "chk") box.innerHTML = `<span class="st ${x.level === "ОШИБКА" ? "new" : "wontfix"}">${esc(x.level.toLowerCase())}</span>${tm}<span>${esc(x.text)}</span>`;
+  if (k === "word") box.innerHTML = d.words_editable
+    ? `<input type="text" id="w-text" value="${esc(x.text)}" aria-label="Текст слова" title="Enter — исправить слово во всех копиях субтитров, Esc — отмена">${tm}`
+    : `<b>${esc(x.text)}</b>${tm}`;
+  if (k === "snd") box.innerHTML = `<input type="number" id="s-at" step="0.01" min="0" value="${T.snd.t0.toFixed(2)}" aria-label="Время звука, с" title="Время звука в секундах, Enter — сохранить">
+      <button class="icon ghost" id="s-q" title="Тише на 1 дБ" aria-label="Тише">${icon("minus")}</button><span class="num" id="s-lv">${sndLevel(T.snd)}</span>
+      <button class="icon ghost" id="s-l" title="Громче на 1 дБ" aria-label="Громче">${icon("plus")}</button>
+      <button class="icon ghost" id="s-play" title="Послушать — с секунды до звука" aria-label="Послушать">${icon("play")}</button>
+      <span class="what" title="${esc(x.what)}">${esc(x.what || x.file)}</span>${x.missing ? '<span class="st new">нет файла</span>' : ""}`;
+}
+const sndBody = (x) => ({ ...reelArgs(), i: x.i, file: x.file, at: +(+x.t0).toFixed(3),
+  ...(x.gain_db != null ? { gain_db: x.gain_db } : { below_db: x.below_db ?? T.data.below_voice_db }) });
+async function saveSound() {
+  const s = T.snd; if (!s) return;
+  const was = T.data.sounds.find((x) => x.i === s.i);
+  try {
+    await api("/api/sound", sndBody(s));
+    if (was) undoable("звук", async () => { await api("/api/sound", sndBody(was)); T.snd = { ...was }; await loadTracks(); });
+    await loadTracks();
+  } catch (e) { fail(e); loadTracks(); }
+}
+async function saveWord() {
+  const x = trFind(T.sel), text = $("#w-text").value.trim();
+  if (!text || text === x.text) return;
+  try {
+    await api("/api/word", { ...reelArgs(), i: x.i, start: x.t0, old: x.text, text }); flash("слово исправлено");
+    undoable("слово", async () => { await api("/api/word", { ...reelArgs(), i: x.i, start: x.t0, old: text, text: x.text }); await loadTracks(); });
+    await loadTracks();
+  } catch (e) { fail(e); }
+}
+$("#insp").addEventListener("click", async (e) => {
+  const id = e.target.closest("button")?.id, s = T.snd;
+  if (id === "s-q" || id === "s-l") {
+    const d = id === "s-l" ? 1 : -1;
+    if (s.gain_db != null) s.gain_db = +s.gain_db + d; else s.below_db = +(s.below_db ?? T.data.below_voice_db) - d;
+    $("#s-lv").textContent = sndLevel(s); await saveSound();
+  }
+  if (id === "s-play") { seek(Math.round(Math.max(0, s.t0 - 1) * S.fps)); v.play(); }
+});
+$("#insp").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { e.stopPropagation(); T.sel = null; drawInsp(); return; }
+  if (e.key !== "Enter") return;
+  if (e.target.id === "w-text") saveWord();
+  if (e.target.id === "s-at") { T.snd.t0 = +e.target.value; saveSound(); }
+});
+async function runCheck() {
+  const b = $("#t-check"); if (!S.reel || b.hidden || b.disabled || b.classList.contains("spin")) return;
+  b.classList.add("spin");
+  try { const r = await api("/api/check", { ...reelArgs(), path: S.reel.path }); flash(r.errors ? `ошибок: ${r.errors}` : r.checks ? `проверить: ${r.checks}` : "проверка чистая"); }
+  catch (e) { fail(e); }
+  finally { b.classList.remove("spin"); loadTracks(); }
+}
+$("#t-check").onclick = runCheck;
+async function applyMaster() {
+  const d = T.data; if (!d || $("#apply").hidden) return;
+  const nc = d.can.patch ? d.caption_edits.length : 0, snd = d.sfx_pending && d.voice && d.can.sfx;
+  const lines = [snd && "свести звуки из sfx.json (~2 с)", nc && `перерисовать субтитры вокруг ${nc} ${plural(nc, "слова", "слов", "слов")} (~20 с на место)`].filter(Boolean);
+  if (!(await ask({ title: `Обновить мастер ${S.reel.file}?`, ok: "Обновить",
+    body: `<span>${lines.join(", ")}.</span><span class="small">Прежний мастер останется в out/renders/…-prev.mp4.</span>` }))) return;
+  const b = $("#apply"); b.disabled = true; b.classList.add("spin");
+  try {
+    if (snd) await api("/api/apply/sounds", { ...reelArgs(), path: S.reel.path });
+    if (nc) await api("/api/apply/captions", { ...reelArgs(), path: S.reel.path });
+    flash("мастер обновлён");
+  } catch (e) { fail(e); }
+  finally { b.disabled = false; b.classList.remove("spin"); await loadReels(); loadTracks(); }
+}
+$("#apply").onclick = applyMaster;
+
+// ---------- три варианта (variants.py) ----------
+async function loadVariants(open) {
+  if (!S.reel) return;
+  const ls = await api("/api/variants?" + q(reelArgs())).catch(() => []);
+  const cur = ls.find((m) => !m.chosen && Object.keys(m.options).length);
+  S.varCur = cur || null; $("#c-varshow").hidden = !cur;
+  if (cur && open) showVariants(cur);
+}
+function showVariants(m) {
+  S.varCur = m;
+  $("#vartitle").textContent = m.task;
+  $("#vargrid").innerHTML = Object.entries(m.options).map(([k, o]) => `<figure>
+    ${o.clip ? `<video src="${media(o.clip)}" autoplay loop muted playsinline></video>` : `<img src="${media(o.image)}" alt="Вариант ${k.toUpperCase()}">`}
+    <figcaption><b>${k.toUpperCase()}</b>${esc(o.text)}</figcaption>
+    <button class="primary" value="${k}">Выбрать ${k.toUpperCase()}</button></figure>`).join("");
+  $("#vardlg").returnValue = ""; $("#vardlg").showModal();
+}
+$("#vardlg").addEventListener("close", async () => {
+  const k = $("#vardlg").returnValue, m = S.varCur;
+  $("#vargrid").innerHTML = "";  // остановить клипы
+  if (!m || !k || k === "close") return;
+  try { await api("/api/variants/apply", { ...reelArgs(), vid: m.id, key: k }); } catch (e) { return fail(e); }
+  flash(k === "base" ? "оставлено как было" : `вариант ${k.toUpperCase()} в коде — «Собрать версию», чтобы в мастер`);
+  const o = m.options[k];
+  if (o) { seek(o.frame); S.pv = { path: o.clip || o.image, clip: !!o.clip, range: m.range, frame: o.frame, at: Date.now() }; setTimeout(showPreview, 300); }
+  loadVariants(false);
+});
+$("#c-varshow").onclick = () => S.varCur && showVariants(S.varCur);
+
+// ---------- шкала времени: клик — кадр, Shift + протяжка — отрезок ----------
+function drawTimeline() {
+  const tl = $("#tl"), n = nframes();
+  tl.querySelectorAll(".mk,.range").forEach((x) => x.remove());
+  const [a, b] = S.range;
+  if (a != null) {
+    const lo = Math.min(a, b ?? a), hi = Math.max(a, b ?? a);
+    const el = document.createElement("div"); el.className = "range";
+    el.style.left = (lo / n) * 100 + "%"; el.style.width = Math.max(0.3, ((hi - lo + 1) / n) * 100) + "%"; tl.appendChild(el);
+  }
+  for (const x of S.doc.notes || []) {
+    if (!S.reel || x.master !== S.reel.file) continue;
+    const el = document.createElement("div"); el.className = "mk " + x.status;
+    el.style.left = (x.frame / n) * 100 + "%"; el.title = x.text; tl.appendChild(el);
+  }
+}
+function tick() {
+  const f = frame();
+  $("#tc").textContent = S.reel ? `${(v.currentTime || 0).toFixed(2)} · ${f}` : "—";
+  $("#ph").style.left = (f / nframes()) * 100 + "%";
+  trPlayhead(); where();
+  const pl = $("#play"), want = v.paused ? "play" : "pause";
+  if (pl.dataset.icon !== want) { pl.dataset.icon = want; pl.innerHTML = icon(want); pl.title = (v.paused ? "Пуск" : "Пауза") + " · Пробел"; }
+  draw();
+  if (!v.paused) requestAnimationFrame(tick);
+}
+v.addEventListener("play", () => { hidePreview(); tick(); }); v.addEventListener("pause", tick);
+v.addEventListener("seeked", () => { if (S.pv && !S.pv.clip && frame() !== S.pv.frame) hidePreview(); tick(); where(); });
+const tlFrame = (e) => { const r = $("#tl").getBoundingClientRect(); return Math.max(0, Math.min(nframes() - 1, Math.round(((e.clientX - r.left) / r.width) * nframes()))); };
+let scrub = null;
+$("#tl").addEventListener("mousedown", (e) => {
+  if (!S.reel) return;
+  v.pause(); const f = tlFrame(e);
+  scrub = e.shiftKey ? { from: f, prev: S.range.slice() } : {};
+  if (e.shiftKey) { S.range = [f, f]; drawTimeline(); }
+  seek(f);
+});
+window.addEventListener("mousemove", (e) => {
+  if (!scrub) return;
+  const f = tlFrame(e); seek(f);
+  if (scrub.from != null) { S.range = [scrub.from, f]; drawTimeline(); }
+});
+window.addEventListener("mouseup", () => { if (scrub?.from != null) setRange(S.range, scrub.prev); scrub = null; });
+
+// ---------- клавиши (по физическим клавишам — работают и в русской раскладке) ----------
+const KEYS = [
+  ["Пробел", "пуск / пауза"], ["← →", "кадр, с Shift — 10 кадров"], ["↑ ↓", "предыдущая / следующая пометка"],
+  ["I  O", "начало и конец отрезка (или Shift + протяжка по шкале)"], ["X", "сбросить отметки и отрезок"],
+  ["P R A", "точка, рамка, стрелка"], ["B F T", "эскиз графики: кисть, плашка, текст"], ["⌫", "убрать последнюю отметку, без отметок — удалить выбранную пометку"],
+  ["G", "сетка кадра"], ["V", "как сейчас в коде / мастер"], ["C", "проверить мастер"], ["+ −", "масштаб дорожек (или ⌘ + колесо)"],
+  ["Enter", "написать пометку"], ["⌘ Enter", "добавить пометку"], ["⌘ ⇧ Enter", "добавить и сразу отдать Claude"], ["⌘ ⌥ Enter", "три варианта"],
+  ["⇧ <  ⇧ >", "медленнее / быстрее: 0.1×, ¼×, ½×, 1×, 1.5×, 2×"],
+  ["⌘ Z", "отменить: отметку, отрезок, сброс, пометку, её удаление или принятие, слово, звук"],
+  ["⌘ ⌫", "удалить мастер или ролик"], ["Esc", "закрыть, снять выбор"], ["?", "эта подсказка"],
+];
+function showKeys() {
+  const d = $("#dlg");
+  d.innerHTML = `<form method="dialog"><h2>Клавиши</h2><dl class="keys">${KEYS.map(([k, t]) => `<dt>${k.split(/\s+/).map((x) => `<kbd>${esc(x)}</kbd>`).join(" ")}</dt><dd>${esc(t)}</dd>`).join("")}</dl>
+    <div class="dbtns"><button value="ok" class="primary">Понятно</button></div></form>`;
+  d.showModal(); d.querySelector("button").focus();
+}
+$("#keysbtn").onclick = showKeys;
+// ---------- скорость просмотра: замедлить, чтобы разглядеть движение; звук не меняет высоту ----------
+const RATES = [0.1, 0.25, 0.5, 1, 1.5, 2];
+const rateLabel = (r) => ({ 0.5: "½×", 0.25: "¼×" })[r] || `${r}×`;
+function setRate(r) {
+  v.playbackRate = v.defaultPlaybackRate = r;  // default — чтобы смена ролика не сбрасывала скорость
+  $("#rate").textContent = rateLabel(r); $("#rate").classList.toggle("slow", r !== 1);
+}
+function stepRate(dir) {
+  const i = RATES.indexOf(v.defaultPlaybackRate);
+  setRate(RATES[Math.max(0, Math.min(RATES.length - 1, (i < 0 ? 3 : i) + dir))]);
+  flash(`скорость ${rateLabel(v.defaultPlaybackRate)}`);
+}
+$("#rate").onclick = () => setRate({ 1: 0.5, 0.5: 0.25, 0.25: 0.1 }[v.defaultPlaybackRate] ?? 1);  // клик — медленнее, после 0.1× снова 1×
+
+const TOOLKEYS = { KeyP: "point", KeyR: "rect", KeyA: "arrow", KeyB: "pen", KeyF: "plate", KeyT: "text" };
+window.addEventListener("keydown", (e) => {
+  if (anyDialog()) return;  // у окон свои клавиши: Esc, Enter, Tab
+  const mod = e.metaKey || e.ctrlKey;
+  if (e.target.matches("textarea, input, select")) {
+    if (e.target.id === "txt" && e.key === "Enter" && mod) { e.preventDefault(); e.altKey ? addVariants() : addNote(e.shiftKey); }
+    if (e.key === "Escape") e.target.blur();
+    return;
+  }
+  if (!S.reel) return;
+  const c = e.code, step = e.shiftKey ? 10 : 1;
+  if (mod && c === "Backspace") { e.preventDefault(); return delReel(); }
+  if (mod && c === "KeyZ" && !e.shiftKey) { e.preventDefault(); return undoLast(); }
+  if (mod || e.altKey) return;
+  if (c === "Space") { e.preventDefault(); v.paused ? v.play() : v.pause(); }
+  else if (e.shiftKey && c === "Comma") stepRate(-1);
+  else if (e.shiftKey && c === "Period") stepRate(1);
+  else if (c === "ArrowLeft") { e.preventDefault(); v.pause(); seek(frame() - step); }
+  else if (c === "ArrowRight") { e.preventDefault(); v.pause(); seek(frame() + step); }
+  else if (c === "ArrowUp") { e.preventDefault(); stepNote(-1); }
+  else if (c === "ArrowDown") { e.preventDefault(); stepNote(1); }
+  else if (c === "KeyI") setRange([frame(), S.range[1]]);
+  else if (c === "KeyO") setRange([S.range[0] ?? 0, frame()]);
+  else if (c === "KeyX") clearDraft();
+  else if (TOOLKEYS[c]) setTool(TOOLKEYS[c]);
+  else if (c === "KeyG") $("#grid").click();
+  else if (c === "KeyV") preview();
+  else if (c === "KeyC") runCheck();
+  else if (c === "Equal" || c === "NumpadAdd") trZoom(1);
+  else if (c === "Minus" || c === "NumpadSubtract") trZoom(-1);
+  else if (c === "Enter") { e.preventDefault(); $("#txt").focus(); }
+  else if (e.key === "?" || (c === "Slash" && e.shiftKey)) showKeys();
+  else if (c === "Backspace" || c === "Delete") {
+    e.preventDefault();
+    if (S.draft.length) { const s = S.draft.pop(); undoable("удаление отметки", () => { S.draft.push(s); draw(); where(); }); draw(); where(); }
+    else if (S.sel) delNote(S.sel);
+  }
+  else if (c === "Escape") { if (S.pv) hidePreview(); else if (T.sel) { T.sel = null; drawTracks(); } else if (S.sel) { S.sel = null; drawNotes(); draw(); } else clearDraft(); }
+});
+$("#grid").onclick = () => { S.grid = !S.grid; $("#grid").classList.toggle("on", S.grid); draw(); };
+$("#play").onclick = () => (v.paused ? v.play() : v.pause());
+$("#add").onclick = () => addNote(false);
+$("#addgo").onclick = () => addNote(true);
+$("#addvar").onclick = addVariants;
+
+function fitStage() {  // поле = кадр 9:16 целиком: отметки ложатся точно на видео при любой ширине панели
+  const r = $(".stagewrap").getBoundingClientRect(), ar = W / H;
+  let h = r.height, w = h * ar;
+  if (w > r.width) { w = r.width; h = w / ar; }
+  $("#stage").style.width = w + "px"; $("#stage").style.height = h + "px";
+  draw();
+}
+new ResizeObserver(fitStage).observe($(".stagewrap"));
+setTool("point"); drawSwatches();
+
+// ---------- подсказки при наведении: из title, клавиша — отдельно ----------
+const tip = Object.assign(document.createElement("div"), { id: "tip" });
+tip.setAttribute("role", "tooltip"); document.body.append(tip);
+const KEYRE = /^(⌘.*|⇧.*|Пробел|Esc|Enter|⌫|\?|[A-Z])$/;
+let tipEl = null, tipT = 0;
+function tipShow(el) {
+  if (el.title) { el.dataset.tip = el.title; el.removeAttribute("title"); }  // системная подсказка не всплывает поверх своей
+  const t = el.dataset.tip; if (!t || !el.isConnected) return;
+  const i = t.lastIndexOf(" · "), key = i > 0 && KEYRE.test(t.slice(i + 3)) ? t.slice(i + 3) : "";
+  tip.innerHTML = esc(key ? t.slice(0, i) : t) + (key ? `<kbd>${esc(key)}</kbd>` : "");
+  tip.className = "show";
+  const r = el.getBoundingClientRect(), w = tip.offsetWidth, h = tip.offsetHeight;
+  const y = r.bottom + 8 + h > innerHeight - 8 ? r.top - h - 8 : r.bottom + 8;
+  tip.style.left = Math.max(8, Math.min(innerWidth - w - 8, r.left + r.width / 2 - w / 2)) + "px"; tip.style.top = y + "px";
+}
+function tipHide() { clearTimeout(tipT); tipEl = null; tip.className = ""; }
+document.addEventListener("pointerover", (e) => {
+  const el = e.target.closest("[title], [data-tip]");
+  if (el === tipEl) return;
+  tipHide(); if (!el) return;
+  if (el.title) { el.dataset.tip = el.title; el.removeAttribute("title"); }
+  tipEl = el; tipT = setTimeout(() => tipEl === el && tipShow(el), 350);
+});
+for (const ev of ["pointerdown", "scroll", "keydown"]) document.addEventListener(ev, tipHide, true);
+document.addEventListener("focusin", (e) => { const el = e.target; if (el.matches?.(":focus-visible") && (el.title || el.dataset?.tip)) { tipEl = el; tipShow(el); } });
+document.addEventListener("focusout", tipHide);
+
+// ---------- старт и ссылки: #<бренд>/<файл>[@кадр] ----------
+function fromHash() {
+  const m = decodeURIComponent(location.hash.slice(1)).match(/^(.+?)\/(.+?\.mp4)(?:@(\d+))?$/);
+  const r = m && S.reels.find((x) => x.brand === m[1] && x.file === m[2]);
+  if (!r) return false;
+  if (S.reel && S.reel.path === r.path) { v.pause(); seek(m[3] ? +m[3] : frame()); }
+  else openReel(r, m[3] ? +m[3] : 0);
+  return true;
+}
+window.addEventListener("hashchange", fromHash);
+(async () => {
+  S.colors = await api("/api/brands").catch(() => ({}));
+  S.feat = await api("/api/features").catch(() => ({ status: true }));
+  await loadReels();
+  if (!fromHash()) $("#stage").insertAdjacentHTML("beforeend", `<div class="empty" id="pick">Выберите ролик</div>`);
+  setInterval(loadNotes, 4000);
+  setInterval(loadReels, 5000);  // статусы, новые мастера и удалённые ролики — из файлов, что бы их ни поменяло
+  (function poll() { loadFeed().catch(() => {}).finally(() => setTimeout(poll, S.job ? 1500 : 5000)); })();
+})();
+v.addEventListener("loadeddata", () => $("#pick")?.remove());
+</script>
+</body>
+</html>
