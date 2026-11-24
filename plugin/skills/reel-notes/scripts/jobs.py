@@ -5,7 +5,8 @@
 полный разговор — сессия Claude Code, её номер в notes.json («session»): `claude --resume <номер>` в Терминале.
 Один ролик — одна сессия: каждый запуск со страницы продолжает её.
 
-    python3 jobs.py    # самопроверка разбора событий (подсказки Claude проверяет test_review.py)
+    python3 jobs.py        # самопроверка разбора событий (подсказки Claude проверяет test_review.py)
+    python3 jobs.py key    # ключ из буфера обмена -> Связка ключей macOS и проверка, что Claude его принимает
 """
 import json, os, re, shutil, signal, subprocess, threading, time
 from pathlib import Path
@@ -56,8 +57,41 @@ def save_settings(new):
 
 
 KEYCHAIN = ("reel-review", "claude-token")  # служба и учётная запись ключа в Связке ключей macOS
-SETUP = ("claude setup-token, затем security add-generic-password -U -s reel-review -a claude-token -w "
-         "(вставить ключ по запросу)")
+SETUP = (f"claude setup-token, скопировать ключ целиком (обе строки), затем python3 \"{Path(__file__).resolve()}\" key")
+KEY = re.compile(r"sk-ant-oat\d\d-[A-Za-z0-9_-]{60,}")
+
+
+def save_key():
+    """Ключ из буфера обмена — в Связку ключей. setup-token печатает ключ на двух строках, и вставка в запрос
+    `security … -w` обрывается на переносе (в Связке оказывается половина ключа, Claude отвечает 401). Поэтому переносы
+    и пробелы убираем здесь, проверяем вид ключа и пробуем его одним коротким запуском. Ключ не печатается."""
+    raw = subprocess.run(["pbpaste"], capture_output=True, text=True).stdout
+    key = re.sub(r"\s+", "", raw)
+    if not KEY.fullmatch(key):
+        return "В буфере обмена нет ключа вида sk-ant-oat01-…: скопируйте его из вывода claude setup-token целиком."
+    # команда — через stdin `security -i`, а не аргументом: аргументы процесса видны любой программе на Mac (ps)
+    r = subprocess.run(["/usr/bin/security", "-i"], input=f"add-generic-password -U -s {KEYCHAIN[0]} -a {KEYCHAIN[1]} -w {key}\n",
+                       capture_output=True, text=True)
+    if oauth_token_from_keychain() != key:
+        return "Связка ключей не приняла запись: " + (r.stderr or r.stdout).strip()[-300:]
+    env = clean_env()
+    t = subprocess.run([N.tool("claude"), "-p", "Ответь одним словом: работает", "--model", "haiku", "--max-turns", "1",
+                        "--output-format", "json"], capture_output=True, text=True, timeout=120, env=env, cwd=Path.home())
+    try:
+        ok = not json.loads(t.stdout).get("is_error")
+    except ValueError:
+        ok = False
+    return (f"Ключ сохранён ({len(key)} знаков) и Claude его принял. Буфер обмена лучше очистить." if ok else
+            f"Ключ сохранён ({len(key)} знаков), но Claude его не принял: создайте новый (claude setup-token) и повторите.")
+
+
+def oauth_token_from_keychain():
+    try:
+        r = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN[0], "-a", KEYCHAIN[1], "-w"],
+                           capture_output=True, text=True, timeout=10)
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
 
 
 def oauth_token():
@@ -70,12 +104,7 @@ def oauth_token():
     t = os.environ.get("CLAUDE_CODE_OAUTH_TOKEN", "").strip()
     if t or not Path("/usr/bin/security").exists():
         return t
-    try:
-        r = subprocess.run(["/usr/bin/security", "find-generic-password", "-s", KEYCHAIN[0], "-a", KEYCHAIN[1], "-w"],
-                           capture_output=True, text=True, timeout=10)
-        return r.stdout.strip() if r.returncode == 0 else ""
-    except (OSError, subprocess.TimeoutExpired):
-        return ""
+    return oauth_token_from_keychain()
 
 
 def clean_env():
@@ -363,6 +392,11 @@ def reset_session(brand, rid):
 
 
 if __name__ == "__main__":
+    import sys
+    if sys.argv[1:] == ["key"]:
+        print(save_key())
+        sys.exit(0)
+    assert KEY.fullmatch("sk-ant-oat01-" + "A" * 80) and not KEY.fullmatch("sk-ant-oat01-" + "A" * 40)
     init = {"type": "system", "subtype": "init", "session_id": "abc", "model": "m", "permissionMode": "auto"}
     assert brief(init) == [{"t": "init", "session": "abc", "model": "m", "mode": "auto"}]
     ev = {"type": "assistant", "message": {"content": [{"type": "text", "text": "Готово"},

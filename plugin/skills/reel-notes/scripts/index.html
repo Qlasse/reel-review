@@ -597,8 +597,8 @@ function ruleBox(n) {
   const r = n.rule;
   if (!r) return "";
   if (r.status === "proposed") return `<div class="rule"><span class="small dim">Правило → ${esc(r.file.replace(/\/brands\/[^/]+\//, " / "))}</span>
-    <textarea data-rule="${n.id}">${esc(r.text)}</textarea>
-    <div class="acts" style="margin:0"><button class="primary" data-act="rule-ok" data-id="${n.id}" title="Дописать это правило в файл">Записать</button><button data-act="rule-no" data-id="${n.id}" title="Не записывать">Не надо</button></div></div>`;
+    <textarea data-rule="${esc(n.id)}">${esc(r.text)}</textarea>
+    <div class="acts" style="margin:0"><button class="primary" data-act="rule-ok" data-id="${esc(n.id)}" title="Дописать это правило в файл">Записать</button><button data-act="rule-no" data-id="${esc(n.id)}" title="Не записывать">Не надо</button></div></div>`;
   if (r.status === "written") return `<div class="small" style="color:var(--ok);margin-top:6px">правило записано</div>`;
   return "";
 }
@@ -614,12 +614,12 @@ function drawNotesNow() {
     const pics = n.before || n.after ? `<div class="pics">${pic("before", "до")}${pic("after", n.after_src === "preview" ? "после · из кода" : "после")}${clip}</div>` : "";
     const answered = ["done", "question", "wontfix"].includes(n.status);
     const acts = S.reopen === n.id
-      ? `<textarea data-reopen="${n.id}" placeholder="Что не так?" style="margin-top:8px"></textarea><div class="acts"><button class="primary" data-act="send" data-id="${n.id}">Вернуть</button><button data-act="cancel">Отмена</button></div>`
-      : answered ? `<div class="acts"><button data-act="accept" data-id="${n.id}" title="Правка устраивает">Принять</button><button data-act="reopen" data-id="${n.id}" title="Вернуть Claude с комментарием">${n.status === "question" ? "Ответить" : "Вернуть"}</button></div>` : "";
+      ? `<textarea data-reopen="${esc(n.id)}" placeholder="Что не так?" style="margin-top:8px"></textarea><div class="acts"><button class="primary" data-act="send" data-id="${esc(n.id)}">Вернуть</button><button data-act="cancel">Отмена</button></div>`
+      : answered ? `<div class="acts"><button data-act="accept" data-id="${esc(n.id)}" title="Правка устраивает">Принять</button><button data-act="reopen" data-id="${esc(n.id)}" title="Вернуть Claude с комментарием">${n.status === "question" ? "Ответить" : "Вернуть"}</button></div>` : "";
     const when = n.range ? `${secs(n.range[0])}–${secs(n.range[1])} с` : `${(+n.t).toFixed(2)} с`;
-    return `<article class="note${S.sel === n.id ? " sel" : ""}" data-id="${n.id}">
-      <header><span class="st ${n.status}">${STATUS[n.status] || n.status}</span><span class="num" title="кадр ${n.frame}">${when}</span>${n.returned ? `<span>↺ ${n.returned}</span>` : ""}
-        <button class="icon ghost" data-act="del" data-id="${n.id}" title="Удалить пометку · ⌫" aria-label="Удалить пометку">${icon("trash")}</button></header>
+    return `<article class="note${S.sel === n.id ? " sel" : ""}" data-id="${esc(n.id)}">
+      <header><span class="st ${esc(String(n.status).replace(/[^a-z]/g, ""))}">${esc(STATUS[n.status] || n.status)}</span><span class="num" title="кадр ${n.frame}">${when}</span>${n.returned ? `<span>↺ ${n.returned}</span>` : ""}
+        <button class="icon ghost" data-act="del" data-id="${esc(n.id)}" title="Удалить пометку · ⌫" aria-label="Удалить пометку">${icon("trash")}</button></header>
       ${other}${n.text ? `<div class="tx">${esc(n.text)}</div>` : ""}${thread ? `<div class="thread">${thread}</div>` : ""}${pics}${ruleBox(n)}${acts}</article>`;
   }).join("");
 }
@@ -774,7 +774,7 @@ function draw() {
 }
 function drawSwatches() {
   const cs = [...new Set([...(S.colors[S.reel?.brand] || []), "#FFD400", "#FFFFFF", "#FF5A36"])];
-  $("#swatches").innerHTML = cs.map((c) => `<button class="sw${c.toLowerCase() === S.color.toLowerCase() ? " on" : ""}" data-c="${c}" style="background:${c}" title="Цвет эскиза ${c}" aria-label="Цвет ${c}"></button>`).join("");
+  $("#swatches").innerHTML = cs.map((c) => `<button class="sw${c.toLowerCase() === S.color.toLowerCase() ? " on" : ""}" data-c="${esc(c)}" style="background:${/^#[0-9a-f]{3,8}$/i.test(c) ? c : "transparent"}" title="Цвет эскиза ${c}" aria-label="Цвет ${c}"></button>`).join("");
 }
 $("#swatches").addEventListener("click", (e) => { if (e.target.dataset.c) { S.color = e.target.dataset.c; drawSwatches(); } });
 function setTool(t) {
@@ -814,7 +814,7 @@ $("#pvtag").onclick = hidePreview;
 
 // ---------- Claude со страницы (jobs.py: claude -p, одна задача за раз) ----------
 function feedItem(it) {
-  const at = (it.at || "").slice(11, 16);
+  const at = esc((it.at || "").slice(11, 16));
   if (it.t === "start") return `<div class="meta">${at} · ${esc(it.text)}</div>`;
   if (it.t === "text") return `<div class="txt">${esc(it.text)}</div>`;
   if (it.t === "tool") return `<div class="tool">${esc(it.name)}${it.what ? " " + esc(it.what) : ""}</div>`;
@@ -1032,9 +1032,9 @@ function showVariants(m) {
   S.varCur = m;
   $("#vartitle").textContent = m.task;
   $("#vargrid").innerHTML = Object.entries(m.options).map(([k, o]) => `<figure>
-    ${o.clip ? `<video src="${media(o.clip)}" autoplay loop muted playsinline></video>` : `<img src="${media(o.image)}" alt="Вариант ${k.toUpperCase()}">`}
-    <figcaption><b>${k.toUpperCase()}</b>${esc(o.text)}</figcaption>
-    <button class="primary" value="${k}">Выбрать ${k.toUpperCase()}</button></figure>`).join("");
+    ${o.clip ? `<video src="${media(o.clip)}" autoplay loop muted playsinline></video>` : `<img src="${media(o.image)}" alt="Вариант ${esc(k.toUpperCase())}">`}
+    <figcaption><b>${esc(k.toUpperCase())}</b>${esc(o.text)}</figcaption>
+    <button class="primary" value="${esc(k)}">Выбрать ${esc(k.toUpperCase())}</button></figure>`).join("");
   $("#vardlg").returnValue = ""; $("#vardlg").showModal();
 }
 $("#vardlg").addEventListener("close", async () => {

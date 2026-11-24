@@ -42,6 +42,7 @@ def fake_project(d, outside):
     (e / "reelkit-props.json").write_text(json.dumps({"captions": {"words": words}}, indent=1))
     (e / "sfx.json").write_text(json.dumps({"below_voice_db": 12, "sounds": [{"file": "a.wav", "at": 1.0, "below_db": 8}]}, indent=1))
     (e / "notes.json").write_text('{"notes": []}')
+    (b / "brands" / "brand" / "brand.json").write_text(json.dumps({"colors": {"primary": "#ABCDEF", "accent": '#fff" onmouseover="x'}}))
     (outside / "src" / "plans").mkdir(parents=True)
     (outside / "src" / "ReelZz01.tsx").write_text("const X = 1;\n")
 
@@ -128,6 +129,16 @@ def test_variants(N, variants, d):
     assert "Brand/edit/zz-01/notes.json" not in m["files"]["base"]
 
 
+def test_security(server, variants):
+    assert server.brand_colors() == {"Brand": ["#ABCDEF"]}  # цвет со вставкой разметки не попадает на страницу
+    for vid in ("../..", "v1/../x", ""):
+        try:
+            variants.apply("Brand", "zz-01", vid, "a")
+            raise AssertionError(f"id вариантов {vid!r} пропущен")
+        except (ValueError, OSError):
+            pass
+
+
 def test_prompts(jobs):
     p = jobs.prompt_for("Brand", "zz-01", "ask", "плашку выше", {"frame": 300, "range": [280, 380], "file": "zz-01.mp4"},
                         {"extra_prompt": "Пиши кратко."})
@@ -162,4 +173,6 @@ if __name__ == "__main__":
         test_prompts(jobs)
         test_tracker(tracker, d)
         test_variants(N, variants, d)
+        import server
+        test_security(server, variants)
     print("review: ok")

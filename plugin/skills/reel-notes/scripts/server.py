@@ -36,6 +36,7 @@ RULES_PAGE = Path(__file__).parent / "rules.html"
 MEDIA = {".mp4": "video/mp4", ".mov": "video/quicktime", ".png": "image/png", ".jpg": "image/jpeg",
          ".jpeg": "image/jpeg"}
 RID = re.compile(r"^[a-z0-9][a-z0-9-]{0,40}$")
+HEX = re.compile(r"#[0-9A-Fa-f]{3,8}")  # цвета бренда идут в style страницы: только настоящий цвет
 
 
 brands = N.brands
@@ -88,7 +89,7 @@ def brand_colors():
         for f in b.glob("brands/*/brand.json"):
             c = json.loads(f.read_text(encoding="utf-8")).get("colors", {})
             vals = list(c.values()) + list((c.get("extra") or {}).values())
-            out[name] = list(dict.fromkeys(v.upper() for v in vals if isinstance(v, str) and v.startswith("#")))
+            out[name] = list(dict.fromkeys(v.upper() for v in vals if isinstance(v, str) and HEX.fullmatch(v)))
     return out
 
 
@@ -204,8 +205,18 @@ class H(BaseHTTPRequestHandler):
         port = self.server.server_port
         ours = {f"127.0.0.1:{port}", f"localhost:{port}"}
         origin = self.headers.get("Origin")
+        site = self.headers.get("Sec-Fetch-Site")  # браузер сам говорит, откуда запрос: чужой сайт читать ничего не может
         return (self.headers.get("Host", "") in ours and (not origin or origin.removeprefix("http://") in ours)
+                and site in (None, "same-origin", "none")
                 and (not post or self.headers.get("Content-Type", "").split(";")[0].strip() == "application/json"))
+
+    def end_headers(self):
+        """Каждому ответу: страницу нельзя встроить в чужой сайт (подставить щелчок по «Удалить»), тип не угадывать."""
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "no-referrer")
+        super().end_headers()
 
     def do_GET(self):
         if not self.allowed(False):
@@ -232,6 +243,7 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, {"job": jobs.current()})
             if u.path == "/api/settings":
                 return self.send(200, {"settings": jobs.settings(), "choices": jobs.CHOICES, "auth": jobs.auth(),
+                                       "scripts": str(C.HERE),
                                        "plugin": bool(jobs.plugin_dir())})
             if u.path == "/api/brands":
                 return self.send(200, brand_colors())

@@ -155,8 +155,8 @@ async function loadSettings() {
   const f = $("#sf");
   for (const [k, opts] of Object.entries(d.choices)) f[k].innerHTML = opts.map((o) => `<option value="${o}">${o || "по умолчанию"}</option>`).join("");
   for (const [k, v] of Object.entries(d.settings)) if (f[k]) f[k].value = v;
-  const setup = `Один раз в Терминале: <code>claude setup-token</code> — выдаст ключ подписки; затем
-    <code>security add-generic-password -U -s reel-review -a claude-token -w</code> — вставить ключ по запросу (он ляжет в Связку ключей macOS). Потом обновите эту вкладку.`;
+  const setup = `Один раз в Терминале: <code>claude setup-token</code> — выдаст ключ подписки. Скопируйте ключ целиком (он печатается на двух строках),
+    затем <code>python3 "${esc(d.scripts)}/jobs.py" key</code> — команда возьмёт ключ из буфера обмена, положит в Связку ключей macOS и проверит, что Claude его принимает. Потом обновите эту вкладку.`;
   $("#authbox").innerHTML = (d.auth.token
     ? `<b style="color:var(--ok)">Claude входит по долгоживущему ключу.</b> Годен ли ключ, покажет первый запуск со страницы. Запуски тратят лимиты подписки.`
     : d.auth.ok

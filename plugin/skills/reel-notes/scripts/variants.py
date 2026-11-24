@@ -13,7 +13,7 @@ notes.json и caption_edits.json). Лежат в edit/<id>/variants/<vid>/<кл�
 без ведущего «/»). Правки вне этих файлов
 (общий кит) вариантами не откатываются. save рисует предпросмотр варианта из кода: кадр (и клип, если задан отрезок).
 """
-import argparse, json, os, shutil, subprocess, sys, time
+import argparse, json, os, re, shutil, subprocess, sys, time
 from pathlib import Path
 
 import notes as N
@@ -23,7 +23,12 @@ KEYS = ("a", "b", "c", "d")
 TRASH = ["/usr/bin/trash"]  # лишние файлы после отката — в Корзину (тест подменяет на rm)
 
 
+VID = re.compile(r"v[0-9-]{1,30}")  # id набора вариантов приходит со страницы: без «..» и «/»
+
+
 def vdir(brand, rid, vid=""):
+    if vid and not VID.fullmatch(vid):
+        raise ValueError("неверный id вариантов")
     return N.bdir(brand) / "edit" / rid / "variants" / vid
 
 
@@ -103,7 +108,7 @@ def save(brand, rid, vid, key, text, scale=0.5):
 
 def apply(brand, rid, vid, key):
     m = manifest(brand, rid, vid)
-    if key != "base" and key not in m["options"]:
+    if key != "base" and (key not in KEYS or key not in m["options"]):
         raise ValueError(f"нет варианта {key}")
     changed = restore(brand, rid, vdir(brand, rid, vid) / key, m["files"][key])
     m["chosen"] = key
