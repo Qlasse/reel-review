@@ -10,7 +10,7 @@
     {
       "name": "reel-review",
       "description": "Пометки на кадре, правки Claude без чата, предпросмотр из кода, дорожки, три варианта, правила из правок.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "source": "./plugin",
       "category": "productivity",
       "author": {

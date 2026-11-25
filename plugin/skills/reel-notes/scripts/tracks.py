@@ -4,12 +4,18 @@
 Дорожки: склейки (captions.json → segments), вставки (visual_plan.json → inserts), слова субтитров, звуки (sfx.json),
 находки проверки проекта (ключ check в .reel-review.json; результат — edit/<id>/verify/check.json).
 
-Правки мышью:
-- слово субтитров — во всех копиях слов: captions.json, reelkit-props.json (из них рисует кит it-reelsmaker),
-  <remotion>/src/plans/<id>.json. Окна правок копятся в edit/<id>/caption_edits.json до «В мастер»:
-  patch_render.py плагина it-reelsmaker перерисовывает ±4 с вокруг слова прямо в мастере (≈ 20 с), звук не трогается;
-- звук — время и громкость в sfx.json. «В мастер»: видео мастера + мастер голоса (out/renders/<id>-voice.mp4)
-  → скрипт сведения проекта (ключ sfx). Прежний мастер — out/renders/<имя>-prev.mp4 (один, перезаписывается).
+Правки мышью (середина блока — сдвиг, край — обрезка):
+- слово субтитров — текст или время во всех копиях слов: captions.json, reelkit-props.json (из них рисует кит
+  it-reelsmaker), <remotion>/src/plans/<id>.json;
+- вставка — начало и длина во всех копиях вставок: visual_plan.json, reelkit-props.json, plans/<id>.json; обрезка
+  начала сдвигает и src_in, чтобы кадры перебивки остались на своих секундах;
+- окна правок слов и вставок копятся в edit/<id>/caption_edits.json до «В мастер»: patch_render.py плагина
+  it-reelsmaker перерисовывает ±4 с вокруг старого и нового места прямо в мастере (≈ 20 с), звук не трогается;
+- звук — время, громкость, обрезка начала (start — с какой секунды файла) и конца (dur) в sfx.json. «В мастер»: видео
+  мастера + мастер голоса (out/renders/<id>-voice.mp4) → скрипт сведения проекта (ключ sfx). Прежний мастер —
+  out/renders/<имя>-prev.mp4 (один, перезаписывается);
+- склейку страница не режет сама: обрезка края склейки становится пометкой «отрезок» для Claude (перенарезка сдвигает
+  всё после неё).
 """
 import json, os, re, shutil, subprocess, sys, tempfile, time
 from pathlib import Path
@@ -55,6 +61,27 @@ def caption_copies(brand, rid):
         if isinstance(words, list) and words and {"text", "start"} <= set(words[0]):
             out.append((p, d, words))
     return out
+
+
+def insert_copies(brand, rid):
+    """[(файл, документ, вставки)] — все копии вставок ролика (план плагина, props кита, план композиции)."""
+    out = []
+    for p in (edir(brand, rid) / "visual_plan.json", edir(brand, rid) / "reelkit-props.json",
+              N.remotion(brand) / "src" / "plans" / f"{rid}.json"):
+        d = load(p)
+        ins = d and d.get("inserts")
+        if isinstance(ins, list) and ins and isinstance(ins[0], dict) and {"id", "start", "dur"} <= set(ins[0]):
+            out.append((p, d, ins))
+    return out
+
+
+def src_in(brand, rid, ins):
+    """С какой секунды исходника идёт вставка (src_in есть только в props кита)."""
+    for _, _, xs in insert_copies(brand, rid):
+        x = next((x for x in xs if x.get("id") == ins.get("id") and "src_in" in x), None)
+        if x:
+            return float(x["src_in"] or 0)
+    return None
 
 
 def first_num(out):
@@ -107,7 +134,10 @@ def tracks(brand, rid, rel):
     sounds = []
     for i, s in enumerate((sfx or {}).get("sounds", [])):
         f = next((b / s["file"] for b in (e, N.bdir(brand)) if (b / s["file"]).is_file()), None)
-        sounds.append({"i": i, "file": s["file"], "t0": float(s["at"]), "t1": float(s["at"]) + (sound_dur(f) if f else 0.3),
+        start, fd = float(s.get("start") or 0), sound_dur(f) if f else 0.3
+        sounds.append({"i": i, "file": s["file"], "t0": float(s["at"]),
+                       "t1": float(s["at"]) + min(float(s.get("dur") or 1e9), max(fd - start, 0.05)),
+                       "start": start, "dur": s.get("dur"), "file_dur": fd,
                        "what": s.get("what", ""), "below_db": s.get("below_db"), "gain_db": s.get("gain_db"),
                        "missing": f is None})
     check = load(e / "verify" / "check.json")
@@ -116,11 +146,14 @@ def tracks(brand, rid, rel):
         "cuts": [{"t0": s["out_start"], "t1": s["out_start"] + s["out_dur"], "label": s.get("source", ""),
                   "what": s.get("beat", "")} for s in caps.get("segments", [])],
         "inserts": [{"t0": i["start"], "t1": i["start"] + i["dur"], "label": i.get("id", ""), "kind": i.get("kind", ""),
-                     "what": i.get("what", "")} for i in plan.get("inserts", []) if "start" in i and "dur" in i],
+                     "what": i.get("what", ""), "src_in": src_in(brand, rid, i)}
+                    for i in plan.get("inserts", []) if "start" in i and "dur" in i],
+        # сдвиг вставки дойдёт до кадра, только если композиция читает копию, а не один visual_plan.json
+        "inserts_editable": any(p.name != "visual_plan.json" for p, _, _ in insert_copies(brand, rid)),
         "words": [{"i": i, "t0": w["start"], "t1": w.get("end", w["start"] + 0.2), "text": w["text"]} for i, w in enumerate(words)],
         # правка слова дойдёт до кадра, только если композиция читает одну из копий (у op-02 свои «subs» в плане)
         "words_editable": any(p.name != "captions.json" for p, _, _ in copies),
-        "caption_files": [str(p.relative_to(ROOT)) for p, _, _ in copies],
+        "caption_files": [C.relp(p) for p, _, _ in copies],
         "sounds": sounds, "below_voice_db": (sfx or {}).get("below_voice_db", 15), "has_sfx": sfx is not None,
         "sfx_pending": bool(sfx) and (e / "sfx.json").stat().st_mtime > mt,
         "voice": str(v.relative_to(ROOT)) if (v := voice_of(brand, rid)) else None,
@@ -139,32 +172,86 @@ def patch_render():
 
 
 # ---------- правки ----------
-def set_word(brand, rid, i, start, old, text):
-    text = " ".join(str(text).split())
-    if not text or len(text) > 60:
-        raise ValueError("слово: от 1 до 60 знаков, без переносов")
-    changed, hit = [], None
+def edit_words(brand, rid, i, start, old, fn):
+    """fn(слово) во всех копиях слов; -> (файлы, слово из первой копии до правки)."""
+    changed, was = [], None
     for p, d, words in caption_copies(brand, rid):
         w = words[i] if 0 <= i < len(words) and abs(words[i]["start"] - start) < 0.005 and words[i]["text"] == old else \
             next((w for w in words if abs(w["start"] - start) < 0.005 and w["text"] == old), None)
         if w:
-            w["text"] = text
-            hit = hit or w
+            was = was or dict(w)
+            fn(w)
             save(p, d)
-            changed.append(str(p.relative_to(ROOT)))
+            changed.append(C.relp(p))
     if not changed:
         raise ValueError("слово не найдено: субтитры поменялись — обновите страницу")
+    return changed, was
+
+
+def add_window(brand, rid, entry):
+    """Окно для «В мастер»: edit/<id>/caption_edits.json (слова и вставки — patch_render перерисует)."""
     ed = edir(brand, rid) / "caption_edits.json"
-    edits = load(ed) or []
-    edits.append({"start": hit["start"], "end": hit.get("end", hit["start"] + 0.3), "old": old, "new": text,
-                  "at": time.strftime("%Y-%m-%dT%H:%M:%S")})
-    same = [e for e in edits if e["start"] == hit["start"]]
+    edits = (load(ed) or []) + [{**entry, "at": time.strftime("%Y-%m-%dT%H:%M:%S")}]
+    save(ed, edits)
+    return ed, edits
+
+
+def set_word(brand, rid, i, start, old, text):
+    text = " ".join(str(text).split())
+    if not text or len(text) > 60:
+        raise ValueError("слово: от 1 до 60 знаков, без переносов")
+    changed, hit = edit_words(brand, rid, i, start, old, lambda w: w.update(text=text))
+    ed, edits = add_window(brand, rid, {"start": hit["start"], "end": hit.get("end", hit["start"] + 0.3), "old": old, "new": text})
+    same = [e for e in edits if e["start"] == hit["start"] and e.get("kind", "word") == "word"]
     if same[0]["old"] == text:  # слово вернули как было — в мастер нести нечего
-        edits = [e for e in edits if e["start"] != hit["start"]]
-    if edits:
-        save(ed, edits)
-    elif ed.is_file():
-        ed.unlink()
+        edits = [e for e in edits if e not in same]
+        save(ed, edits) if edits else ed.unlink()
+    return {"changed": changed}
+
+
+MIN_LEN = 0.04  # с: короче блок не обрезается (кадр при 25 fps)
+
+
+def set_word_time(brand, rid, i, start, old, t0, t1):
+    """Сдвиг или обрезка слова: новое начало и конец во всех копиях; окно — старое и новое место."""
+    t0, t1 = num(t0, 3), num(t1, 3)
+    dur = (load(edir(brand, rid) / "captions.json") or {}).get("duration") or 1e9
+    if not 0 <= t0 or t1 - t0 < MIN_LEN or t1 > dur + 1e-3:
+        raise ValueError(f"время слова: от 0 до {dur:.2f} с, не короче {MIN_LEN} с")
+    changed, was = edit_words(brand, rid, i, start, old, lambda w: w.update(start=t0, end=t1))
+    a, b = was["start"], was.get("end", was["start"] + 0.3)
+    add_window(brand, rid, {"start": min(a, t0), "end": max(b, t1), "old": f"{old} {a:.2f}–{b:.2f}",
+                            "new": f"{old} {t0:.2f}–{t1:.2f}", "kind": "word_time"})
+    return {"changed": changed}
+
+
+def set_insert(brand, rid, iid, start, edge, t0, t1):
+    """Вставка мышью: edge move — сдвиг целиком, in — обрезка начала (src_in сдвигается вместе с ним), out — конца."""
+    if edge not in ("move", "in", "out"):
+        raise ValueError("edge: move, in или out")
+    t0, t1 = num(t0, 3), num(t1, 3)
+    dur = (load(edir(brand, rid) / "captions.json") or {}).get("duration") or 1e9
+    if not 0 <= t0 or t1 - t0 < MIN_LEN or t1 > dur + 1e-3:
+        raise ValueError(f"время вставки: от 0 до {dur:.2f} с, не короче {MIN_LEN} с")
+    changed, was = [], None
+    for p, d, ins in insert_copies(brand, rid):
+        x = next((x for x in ins if x.get("id") == iid and abs(float(x["start"]) - start) < 0.005), None)
+        if not x:
+            continue
+        was = was or dict(x)
+        if edge == "in" and "src_in" in x:
+            src = float(x["src_in"] or 0) + (t0 - float(x["start"]))
+            if src < -1e-3:
+                raise ValueError(f"{iid}: раньше начала исходника не растянуть (src_in {x['src_in']})")
+            x["src_in"] = num(max(src, 0), 3)
+        x["start"], x["dur"] = t0, num(t1 - t0, 3)
+        save(p, d)
+        changed.append(C.relp(p))
+    if not changed:
+        raise ValueError("вставка не найдена: план поменялся — обновите страницу")
+    a, b = float(was["start"]), float(was["start"]) + float(was["dur"])
+    add_window(brand, rid, {"start": min(a, t0), "end": max(b, t1), "old": f"{iid} {a:.2f}–{b:.2f}",
+                            "new": f"{iid} {t0:.2f}–{t1:.2f}", "kind": "insert"})
     return {"changed": changed}
 
 
@@ -173,7 +260,9 @@ def num(x, nd):
     return int(v) if v.is_integer() else v  # 8, а не 8.0: файл не меняется без нужды
 
 
-def set_sound(brand, rid, i, file, at=None, below_db=None, gain_db=None):
+def set_sound(brand, rid, i, file, at=None, below_db=None, gain_db=None, start=None, dur=None):
+    """Время, громкость и обрезка звука. start — с какой секунды файла (обрезка начала), dur — сколько звучит
+    (обрезка конца); 0 — без обрезки, ключ убирается."""
     p = edir(brand, rid) / "sfx.json"
     doc = load(p)
     if not doc or not 0 <= i < len(doc.get("sounds", [])) or doc["sounds"][i]["file"] != file:
@@ -181,14 +270,24 @@ def set_sound(brand, rid, i, file, at=None, below_db=None, gain_db=None):
     s = doc["sounds"][i]
     if at is not None:
         at = num(at, 3)
-        dur = (load(edir(brand, rid) / "captions.json") or {}).get("duration") or 1e9
-        if not 0 <= at < dur:
-            raise ValueError(f"время звука: от 0 до {dur:.2f} с")
+        dur_v = (load(edir(brand, rid) / "captions.json") or {}).get("duration") or 1e9
+        if not 0 <= at < dur_v:
+            raise ValueError(f"время звука: от 0 до {dur_v:.2f} с")
         s["at"] = at
     if below_db is not None:
         s["below_db"] = num(below_db, 1)
     if gain_db is not None:
         s["gain_db"] = num(gain_db, 1)
+    for k, v in (("start", start), ("dur", dur)):
+        if v is None:
+            continue
+        v = num(v, 3)
+        if v < 0 or (k == "dur" and 0 < v < MIN_LEN):
+            raise ValueError(f"{k}: не меньше 0" + (f", длина не короче {MIN_LEN} с" if k == "dur" else ""))
+        if v:
+            s[k] = v
+        else:
+            s.pop(k, None)
     save(p, doc)
     return {"sound": s}
 
@@ -251,7 +350,10 @@ def apply_captions(brand, rid, rel):
     if not pr:
         raise ValueError("плагин it-reelsmaker не найден: patch_render.py недоступен")
     props = edir(brand, rid) / "reelkit-props.json"
-    fps = 30
+    r = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=r_frame_rate",
+                        "-of", "csv=p=0", str(master)], capture_output=True, text=True)
+    num_, _, den = (r.stdout.strip().rstrip(",") or "30/1").partition("/")
+    fps = float(num_) / float(den or 1)  # у роликов 25 и 30 к/с: окно в кадрах — по мастеру
     ws = windows(edits, duration(master), fps)
     jobs.claim("captions", brand, rid, "субтитры → в мастер")
     try:

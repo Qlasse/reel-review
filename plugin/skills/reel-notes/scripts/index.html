@@ -110,7 +110,7 @@ main { display: flex; flex-direction: column; min-width: 0; min-height: 0; paddi
   font-size: 11px; line-height: 16px; color: #111; cursor: pointer; }
 .it.cut { background: #3a3f4a; color: var(--text); } .it.cut.alt { background: #4d5464; }
 .it.ins { background: #6aa8ff; } .it.word { background: #d9dadd; } .it.word.edited { background: var(--ok); }
-.lane.ro .it.word { background: #5b5e66; color: #d9dadd; cursor: default; }
+.lane.ro .it.word, .lane.ro .it.ins { background: #5b5e66; color: #d9dadd; cursor: default; }
 .it.snd { background: var(--warn); cursor: grab; } .it.snd.missing { background: var(--mark); }
 .it.chk { background: var(--mark); color: #fff; } .it.chk.warn { background: var(--warn); color: #2a1a00; }
 .it.sel { outline: 2px solid #fff; z-index: 2; }
@@ -263,10 +263,10 @@ kbd { font: 11px ui-monospace, Menlo, monospace; color: var(--text); border: 1px
     </div>
     <div class="tracks" id="tracks" hidden>
       <div class="trlabels">
-        <span data-icon="scissors" title="Склейки — куски дублей в нарезке"></span>
-        <span data-icon="layers" title="Вставки — перебивки и графика из плана ролика"></span>
+        <span data-icon="scissors" title="Склейки — куски дублей в нарезке. Тянуть край — обрезать: станет пометкой для Claude (перенарезка)"></span>
+        <span data-icon="layers" title="Вставки — перебивки и графика из плана ролика. Тянуть середину — сдвинуть, край — обрезать"></span>
         <span data-icon="captions" id="wordslabel" title="Слова субтитров — клик по слову, чтобы исправить опечатку"></span>
-        <span data-icon="wave" title="Звуки — тянуть блок, чтобы сдвинуть; громкость — в строке под дорожками"></span>
+        <span data-icon="wave" title="Звуки — тянуть середину, чтобы сдвинуть, край — обрезать; громкость — в строке под дорожками"></span>
         <button id="t-check" data-icon="alert" title="Проверка мастера: хвосты, вдохи, повторы, логотип, сведены ли звуки. Около 5 секунд · C" aria-label="Проверить мастер"></button>
       </div>
       <div class="trscroll" id="trscroll"><div class="trinner" id="trinner"></div></div>
@@ -818,9 +818,10 @@ function feedItem(it) {
   if (it.t === "start") return `<div class="meta">${at} · ${esc(it.text)}</div>`;
   if (it.t === "text") return `<div class="txt">${esc(it.text)}</div>`;
   if (it.t === "tool") return `<div class="tool">${esc(it.name)}${it.what ? " " + esc(it.what) : ""}</div>`;
-  if (it.t === "reset") return `<div class="meta">${at} · новая сессия</div>`;
+  if (it.t === "reset") return `<div class="meta">${at} · новая сессия${it.why ? ": " + esc(it.why) : ""}</div>`;
   if (it.t === "done") {
-    const m = [it.secs != null && `${Math.floor(it.secs / 60)}:${String(it.secs % 60).padStart(2, "0")}`, it.cost != null && `≈ $${(+it.cost).toFixed(2)} по ценам API`, it.denied && `запрещено: ${it.denied}`].filter(Boolean).join(" · ");
+    const m = [it.secs != null && `${Math.floor(it.secs / 60)}:${String(it.secs % 60).padStart(2, "0")}`, it.cost != null && `≈ $${(+it.cost).toFixed(2)} по ценам API`, it.turns && `${it.turns} ${plural(it.turns, "ход", "хода", "ходов")}`,
+      it.ctx && `разговор ${Math.round(it.ctx / 1000)} тыс. токенов`, it.denied && `запрещено: ${it.denied}`].filter(Boolean).join(" · ");
     return `<div class="${it.error ? "err" : "ok"}">${it.stopped ? "Остановлено" : it.error ? "Ошибка" : "Готово"}${m ? " · " + m : ""}</div>${it.hint ? `<div class="err">${esc(it.hint)}</div>` : ""}${it.error && it.text && !it.hint ? `<div class="meta">${esc(it.text)}</div>` : ""}`;
   }
   return "";
@@ -894,8 +895,9 @@ function drawTracks() {
     d.sounds.map((x) => trItem("snd" + (x.missing ? " missing" : ""), x, "snd:" + x.i, x.what || x.file, `${x.t0.toFixed(2)} с — ${x.what || x.file}`)),
     d.check ? d.check.items.map((c, i) => c.t0 == null || c.level === "ок" ? "" : trItem("chk" + (c.level === "ПРОВЕРИТЬ" ? " warn" : ""), { t0: c.t0, t1: Math.max(c.t1, c.t0 + 0.2) }, "chk:" + i, "!", c.text)) : [],
   ];
-  $("#trinner").innerHTML = lanes.map((l, i) => `<div class="lane${i === 2 && !d.words_editable ? " ro" : ""}">${l.join("")}</div>`).join("") + `<div class="trph" id="trph"></div>`;
-  $("#wordslabel").title = d.words_editable ? "Слова субтитров — клик по слову, чтобы исправить опечатку" : "Слова субтитров — у этого ролика они в плане композиции, исправит Claude по пометке";
+  const ro = [false, !d.inserts_editable, !d.words_editable];
+  $("#trinner").innerHTML = lanes.map((l, i) => `<div class="lane${ro[i] ? " ro" : ""}">${l.join("")}</div>`).join("") + `<div class="trph" id="trph"></div>`;
+  $("#wordslabel").title = d.words_editable ? "Слова субтитров — щелчок: исправить текст; тянуть середину — сдвинуть, край — обрезать" : "Слова субтитров — у этого ролика они в плане композиции, исправит Claude по пометке";
   // проверка: счётчик на значке, бледный — если мастер новее проверки
   const btn = $("#t-check"), errs = d.check ? d.check.errors : 0, n = chk.length;
   btn.hidden = !d.can.check && !d.check;  // проверки нет в проекте — нет и значка
@@ -905,7 +907,7 @@ function drawTracks() {
   // правки, которые ждут мастера: слова и звуки — одной кнопкой
   const nc = d.can.patch ? d.caption_edits.length : 0, snd = d.sfx_pending && d.voice && d.can.sfx;
   $("#apply").hidden = !(nc || snd);
-  $("#apply").title = "В мастер без Claude: " + [snd && "свести звуки", nc && `перерисовать субтитры: ${nc} ${plural(nc, "слово", "слова", "слов")}`].filter(Boolean).join(", ");
+  $("#apply").title = "В мастер без Claude: " + [snd && "свести звуки", nc && `перерисовать места ${nc} ${plural(nc, "правки", "правок", "правок")} слов и вставок`].filter(Boolean).join(", ");
   trPlayhead(); drawInsp();
 }
 function trPlayhead() {
@@ -921,27 +923,97 @@ function trFind(key) {
   const [k, i] = key.split(":"), d = T.data;
   return k === "cut" ? d.cuts[i] : k === "ins" ? d.inserts[i] : k === "word" ? d.words[i] : k === "snd" ? d.sounds.find((x) => x.i === +i) : d.check?.items[i];
 }
+// Мышью: середина блока — сдвиг, край (6 px) — обрезка. Склейку только обрезать: это пометка Claude (перенарезка).
+const EDGE = 6;
+function dragEdge(key, el, e) {
+  const k = key.split(":")[0], d = T.data;
+  if (k === "chk" || (k === "word" && !d.words_editable) || (k === "ins" && !d.inserts_editable)) return null;
+  const r = el.getBoundingClientRect();
+  const edge = r.width < 3 * EDGE ? "move" : e.clientX - r.left < EDGE ? "in" : r.right - e.clientX < EDGE ? "out" : "move";
+  return k === "cut" && edge === "move" ? null : edge;
+}
+function dragLimits(key, x) {  // [самое раннее начало, самый поздний конец]
+  const [k, i] = key.split(":"), d = T.data;
+  if (k === "word") return [d.words[+i - 1]?.t1 ?? 0, d.words[+i + 1]?.t0 ?? S.dur];  // слова не перепрыгивают соседей
+  if (k === "snd") return [Math.max(0, x.t0 - x.start), Math.min(S.dur, x.t0 - x.start + x.file_dur)];  // не дальше файла
+  if (k === "ins" && x.src_in != null) return [Math.max(0, x.t0 - x.src_in), S.dur];  // не раньше начала исходника
+  return [0, S.dur];
+}
 $("#trinner").addEventListener("mousedown", (e) => {
   if (!T.data) return;
   const el = e.target.closest(".it");
   v.pause();
   if (!el) { T.sel = null; drawInsp(); return seek(Math.round(trTime(e) * S.fps)); }
-  const key = el.dataset.k, x = trFind(key);
+  const key = el.dataset.k, x = trFind(key), edge = dragEdge(key, el, e);
   T.sel = key;
-  if (key.startsWith("snd:")) { T.snd = { ...x }; T.drag = { x0: e.clientX, t0: x.t0, moved: false }; }
-  seek(Math.round((x.t0 ?? 0) * S.fps) + (key.startsWith("word:") ? 1 : 0));
+  if (key.startsWith("snd:")) T.snd = { ...x };
+  if (edge) T.drag = { key, edge, x0: e.clientX, n0: { ...x }, t0: x.t0, t1: x.t1, lim: dragLimits(key, x), moved: false };
+  if (edge !== "out") seek(Math.round((x.t0 ?? 0) * S.fps) + (key.startsWith("word:") ? 1 : 0));
   drawTracks();
   if (T.drag) T.drag.el = document.querySelector(`.it[data-k="${key}"]`);
-  if (key.startsWith("word:")) $("#w-text")?.select();
+  if (key.startsWith("word:") && !T.drag) $("#w-text")?.select();
+});
+$("#trinner").addEventListener("mousemove", (e) => {  // курсор: край — обрезка, середина — сдвиг
+  const el = !T.drag && e.target.closest(".it"); if (!el || !T.data) return;
+  const edge = dragEdge(el.dataset.k, el, e);
+  el.style.cursor = !edge ? "" : edge === "move" ? "grab" : "ew-resize";
 });
 window.addEventListener("mousemove", (e) => {
   const g = T.drag; if (!g || !g.el) return;
   const dx = e.clientX - g.x0; if (Math.abs(dx) > 3) g.moved = true;
   if (!g.moved) return;
-  T.snd.t0 = Math.max(0, Math.min(S.dur - 0.05, g.t0 + (dx / $("#trinner").getBoundingClientRect().width) * S.dur));
-  g.el.style.left = pct(T.snd.t0); if ($("#s-at")) $("#s-at").value = T.snd.t0.toFixed(2);
+  const fr = 1 / (S.fps || 30), min = Math.max(fr, 0.04), len = g.n0.t1 - g.n0.t0;
+  const dt = Math.round(((dx / $("#trinner").getBoundingClientRect().width) * S.dur) / fr) * fr;  // по кадрам
+  const [lo, hi] = g.lim;
+  if (g.edge === "move") { g.t0 = Math.max(lo, Math.min(hi - len, g.n0.t0 + dt)); g.t1 = g.t0 + len; }
+  if (g.edge === "in") g.t0 = Math.max(lo, Math.min(g.n0.t1 - min, g.n0.t0 + dt));
+  if (g.edge === "out") g.t1 = Math.min(hi, Math.max(g.n0.t0 + min, g.n0.t1 + dt));
+  g.el.style.left = pct(g.t0); g.el.style.width = ((g.t1 - g.t0) / S.dur) * 100 + "%";
+  seek(Math.round((g.edge === "out" ? g.t1 - fr : g.t0) * S.fps));
+  $("#insp").querySelector(".num.dim")?.replaceChildren(`${g.t0.toFixed(2)}–${g.t1.toFixed(2)} с`);
+  if (key0(g) === "snd" && $("#s-at")) $("#s-at").value = g.t0.toFixed(2);
 });
-window.addEventListener("mouseup", () => { const g = T.drag; T.drag = null; if (g && g.moved) saveSound(); });
+const key0 = (g) => g.key.split(":")[0];
+window.addEventListener("mouseup", () => {
+  const g = T.drag; T.drag = null; if (!g) return;
+  if (g.moved) saveDrag(g); else if (key0(g) === "word") $("#w-text")?.select();  // щелчок по слову — исправить текст
+});
+async function saveDrag(g) {
+  const k = key0(g), x = g.n0, r = (t) => +t.toFixed(3);
+  try {
+    if (k === "snd") {  // сдвиг — at; край — start (с какой секунды файла) и dur
+      const shift = g.edge === "in" ? g.t0 - x.t0 : 0;
+      T.snd = { ...T.snd, t0: g.t0, start: r(x.start + shift), dur: g.edge === "move" ? x.dur : r(g.t1 - g.t0) };
+      return await saveSound();
+    }
+    if (k === "word") {
+      await api("/api/word/time", { ...reelArgs(), i: x.i, start: x.t0, old: x.text, t0: r(g.t0), t1: r(g.t1) });
+      undoable("время слова", async () => { await api("/api/word/time", { ...reelArgs(), i: x.i, start: r(g.t0), old: x.text, t0: x.t0, t1: x.t1 }); await loadTracks(); });
+    }
+    if (k === "ins") {
+      await api("/api/insert", { ...reelArgs(), iid: x.label, start: x.t0, edge: g.edge, t0: r(g.t0), t1: r(g.t1) });
+      undoable("вставка", async () => { await api("/api/insert", { ...reelArgs(), iid: x.label, start: r(g.t0), edge: g.edge, t0: x.t0, t1: x.t1 }); await loadTracks(); });
+    }
+    if (k === "cut") return cutNote(g);
+    flash("в коде — «В мастер», чтобы перерисовать это место");
+  } catch (e) { fail(e); }
+  loadTracks();
+}
+async function cutNote(g) {  // склейка: перенарезка сдвигает всё после неё — это работа Claude, пометкой «отрезок»
+  const x = g.n0, side = g.edge === "in" ? "начало" : "конец", was = g.edge === "in" ? x.t0 : x.t1, now = g.edge === "in" ? g.t0 : g.t1;
+  const d = now - was, cut = d * (g.edge === "in" ? 1 : -1) > 0;
+  const a = Math.round(Math.min(was, now) * S.fps), b = Math.round(Math.max(was, now) * S.fps);
+  const text = `Склейка ${x.label} (${x.t0.toFixed(2)}–${x.t1.toFixed(2)} с): ${side} ${was.toFixed(2)} → ${now.toFixed(2)} с — `
+    + `${cut ? "обрезать" : "добавить"} ${Math.abs(d).toFixed(2)} с. Перенарезать и сдвинуть всё, что после.`;
+  const id = "n" + Date.now().toString(36);
+  try {
+    await saveNote({ id, master: S.reel.file, master_path: S.reel.path, master_mtime: S.reel.mtime, fps: S.fps, frame: a,
+      t: +(a / S.fps).toFixed(3), range: [a, Math.max(a, b - 1)], kind: "timing", shapes: [], text, status: "new" });
+    undoable("пометка склейки", () => removeNote(id));
+    flash("склейку меняет Claude — добавлена пометка");
+  } catch (e) { fail(e); }
+  drawTracks();
+}
 function sndLevel(x) { return x.gain_db != null ? `${(+x.gain_db).toFixed(0)} дБ` : `−${(+(x.below_db ?? T.data.below_voice_db)).toFixed(0)} дБ к голосу`; }
 function drawInsp() {
   const box = $("#insp"), d = T.data;
@@ -961,7 +1033,7 @@ function drawInsp() {
       <button class="icon ghost" id="s-play" title="Послушать — с секунды до звука" aria-label="Послушать">${icon("play")}</button>
       <span class="what" title="${esc(x.what)}">${esc(x.what || x.file)}</span>${x.missing ? '<span class="st new">нет файла</span>' : ""}`;
 }
-const sndBody = (x) => ({ ...reelArgs(), i: x.i, file: x.file, at: +(+x.t0).toFixed(3),
+const sndBody = (x) => ({ ...reelArgs(), i: x.i, file: x.file, at: +(+x.t0).toFixed(3), start: x.start || 0, dur: x.dur || 0,
   ...(x.gain_db != null ? { gain_db: x.gain_db } : { below_db: x.below_db ?? T.data.below_voice_db }) });
 async function saveSound() {
   const s = T.snd; if (!s) return;
@@ -1007,7 +1079,7 @@ $("#t-check").onclick = runCheck;
 async function applyMaster() {
   const d = T.data; if (!d || $("#apply").hidden) return;
   const nc = d.can.patch ? d.caption_edits.length : 0, snd = d.sfx_pending && d.voice && d.can.sfx;
-  const lines = [snd && "свести звуки из sfx.json (~2 с)", nc && `перерисовать субтитры вокруг ${nc} ${plural(nc, "слова", "слов", "слов")} (~20 с на место)`].filter(Boolean);
+  const lines = [snd && "свести звуки из sfx.json (~2 с)", nc && `перерисовать места ${nc} ${plural(nc, "правки", "правок", "правок")} слов и вставок (±4 с вокруг каждой, близкие — одним куском; ~20–40 с)`].filter(Boolean);
   if (!(await ask({ title: `Обновить мастер ${S.reel.file}?`, ok: "Обновить",
     body: `<span>${lines.join(", ")}.</span><span class="small">Прежний мастер останется в out/renders/…-prev.mp4.</span>` }))) return;
   const b = $("#apply"); b.disabled = true; b.classList.add("spin");

@@ -3,7 +3,9 @@
 
 Одна тяжёлая задача за раз (рендер, предпросмотр, проверка, Claude): пока работает одна, остальные ждут. Лента работы Claude — <бренд>/edit/<id>/claude-feed.jsonl (коротко: текст, инструменты, итог);
 полный разговор — сессия Claude Code, её номер в notes.json («session»): `claude --resume <номер>` в Терминале.
-Один ролик — одна сессия: каждый запуск со страницы продолжает её.
+Один ролик — одна сессия: запуск со страницы продолжает её, пока она не разрослась (settings.resume_max_k тысяч токенов
+контекста, по умолчанию 120). Каждый ход Claude перечитывает весь разговор: продолжение сессии на 300 тыс. токенов
+дороже и медленнее нового запуска, которому хватает notes.py list и файлов ролика.
 
     python3 jobs.py        # самопроверка разбора событий (подсказки Claude проверяет test_review.py)
     python3 jobs.py key    # ключ из буфера обмена -> Связка ключей macOS и проверка, что Claude его принимает
@@ -17,7 +19,7 @@ from config import ROOT
 
 SCRIPTS = C.HERE  # Claude зовёт notes.py и variants.py плагина по полному пути
 DEFAULTS = {"model": "", "effort": "", "permission_mode": "auto", "max_budget_usd": 0, "preview_scale": 0.5,
-            "extra_prompt": "", "idle_minutes": 30}
+            "extra_prompt": "", "idle_minutes": 30, "resume_max_k": 120}
 CHOICES = {"effort": ["", "low", "medium", "high", "xhigh", "max"],
            "permission_mode": ["auto", "acceptEdits", "bypassPermissions"]}
 SLOT = threading.Lock()
@@ -45,12 +47,14 @@ def save_settings(new):
             raise ValueError(f"{k}: одно из {CHOICES[k]}")
         if k == "model" and not re.match(r"^[a-z0-9.\-\[\]]{0,60}$", str(v)):
             raise ValueError("модель: имя вида opus, sonnet, claude-opus-5-5")
-        if k in ("max_budget_usd", "preview_scale", "idle_minutes"):
+        if k in ("max_budget_usd", "preview_scale", "idle_minutes", "resume_max_k"):
             v = float(v or 0)
             if k == "preview_scale" and not 0.2 <= v <= 1:
                 raise ValueError("размер клипа предпросмотра: от 0.2 до 1")
             if k == "idle_minutes" and not 0 <= v <= 24 * 60:
                 raise ValueError("выключение без работы: от 0 (никогда) до 1440 минут")
+            if k == "resume_max_k" and not 0 <= v <= 1000:
+                raise ValueError("продолжать сессию до: от 0 (каждый запуск — новая) до 1000 тыс. токенов")
         s[k] = v
     C.save_settings(s)
     return s
@@ -255,13 +259,28 @@ def rules_howto(brand, rid):
             "пользователь подтвердит предложение на странице.")
 
 
+def work_rules(brand, rid):
+    """Как работать быстро: замер 24.11 — запуск на 3 пометки шёл 44 мин и 140 ходов, ¾ времени модель думала, контекст
+    вырос с 39 до 297 тыс. токенов. Каждый ход перечитывает весь разговор, поэтому дешевле меньше ходов и меньше текста."""
+    rel = C.relp
+    pd = plugin_dir()
+    where = (f"Файлы ролика — {rel(N.bdir(brand) / 'edit' / rid)}/, композиция — {rel(N.remotion(brand) / 'src')}/"
+             f"{N.comp_id(rid)}*.tsx" + (f", скрипты it-reelsmaker — {pd}/skills/it-reelsmaker/scripts" if pd else "")
+             + ": не искать.")
+    return (f"{where} Каждый ход перечитывает весь разговор, поэтому короткой дорогой: несколько проверок — одной командой; "
+            "файлы не читать целиком (grep -n, нужные строки); правки — инструментом Edit, а не скриптом; кадры пометок — "
+            f"одной командой ({notes_cmd(brand, rid)} frame n1 n2 … before), предпросмотр всех пометок — тоже одной "
+            "(preview n1 n2 …: сборка и Chrome один раз); несколько кадров смотреть одним листом; не перечитывать то, что "
+            "уже есть в разговоре.")
+
+
 def prompt_for(brand, rid, mode, text, ctx, s):
     head = (f"Ролик {rid}, бренд «{brand}». Ты запущен со страницы пометок (плагин reel-review) без чата: ход работы виден "
-            "в ленте страницы. Пиши по-русски.")
+            "в ленте страницы. Пиши по-русски. " + work_rules(brand, rid))
     waiting = sum(n.get("status") in N.WAITING for n in N.read(brand, rid)["notes"])
     if mode == "notes":
         body = (f"Внеси ждущие пометки ({waiting}) по скиллу reel-notes. Полный рендер не делай: после правок покажи каждую "
-                f"пометку предпросмотром из кода — {notes_cmd(brand, rid)} preview <n> — посмотри "
+                f"пометку предпросмотром из кода — {notes_cmd(brand, rid)} preview <n1> <n2> … — посмотри "
                 "картинку и ответь на пометку (set done / question / wontfix). Наброски графики (kind draw, фигуры с color) — "
                 "это эскиз: сделай по нему настоящую графику в стиле бренда по его правилам и правилам проекта (CLAUDE.md). "
                 "Если правка меняет нарезку — перенарежь и обнови public/, но мастер собирай только по команде «Собери версию». "
@@ -289,7 +308,7 @@ def prompt_for(brand, rid, mode, text, ctx, s):
             opt += f" --range {ctx['range'][0]}-{ctx['range'][1]}" if ctx.get("range") else ""
             v = notes_cmd(brand, rid, "variants.py")
             rem, b = N.remotion(brand), N.bdir(brand)
-            rel = lambda x: str(x.relative_to(ROOT)) if x.is_relative_to(ROOT) else str(x)
+            rel = C.relp
             body = (f"Сделай три заметно разных варианта: {text}.{where} Порядок: {v} begin \"<задание>\"{opt} — получишь id; "
                     f"для каждого варианта a, b, c: внеси правку, {v} save <id> <a|b|c> \"чем вариант отличается, одной строкой\", "
                     f"затем {v} base <id> — вернуть исходное, и следующий вариант. Правь только файлы ролика: "
@@ -316,7 +335,13 @@ def start_claude(brand, rid, mode, text="", ctx=None):
     claim("claude", brand, rid, title)
     try:
         s = settings()
-        sid = N.read(brand, rid).get("session")
+        doc = N.read(brand, rid)
+        sid = doc.get("session")
+        grown = doc.get("session_ctx") or 0
+        if sid and grown > s["resume_max_k"] * 1000:  # разросшуюся сессию не продолжаем: каждый ход перечитал бы её
+            sid = None
+            N.update(brand, rid, lambda d: [d.pop(k, None) for k in ("session", "session_ctx")])
+            feed_add(brand, rid, {"t": "reset", "why": f"прежняя сессия — {grown // 1000} тыс. токенов"})
         prompt = prompt_for(brand, rid, mode, text, ctx or {}, s)
         cmd = [N.tool("claude"), "-p", prompt, "--output-format", "stream-json", "--verbose",
                "--permission-mode", s["permission_mode"], "-n", f"{rid} · страница пометок"]
@@ -344,20 +369,30 @@ def start_claude(brand, rid, mode, text="", ctx=None):
     return current()
 
 
+def context_of(ev):
+    """Размер разговора на этом ходу, токенов: всё, что модель прочла, — новое, из кэша и записанное в кэш."""
+    u = ev.get("message", {}).get("usage") or {} if ev.get("type") == "assistant" else {}
+    return sum(u.get(k) or 0 for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
+
+
 def pump(brand, rid, proc, sid):
     # ponytail: состояние задачи — в памяти сервера; перезапуск сервера во время работы Claude теряет ленту до конца запуска
-    got_result = False
+    got_result, ctx = False, 0
     try:
         for line in proc.stdout:
             try:
                 ev = json.loads(line)
             except ValueError:
                 continue
+            ctx = context_of(ev) or ctx
             for item in brief(ev):
                 if item["t"] == "init" and item["session"] and item["session"] != sid:
                     sid = item["session"]
                     N.update(brand, rid, lambda d: d.update(session=sid))
-                got_result |= item["t"] == "done"
+                if item["t"] == "done":
+                    got_result = True
+                    item["ctx"] = ctx
+                    N.update(brand, rid, lambda d: d.update(session_ctx=ctx))
                 feed_add(brand, rid, item)
         proc.wait()
         if not got_result:
@@ -387,7 +422,7 @@ def reset_session(brand, rid):
     j = STATE["job"]
     if j and j["id"] == rid:
         raise Busy("Claude сейчас работает с этим роликом")
-    N.update(brand, rid, lambda d: d.pop("session", None))
+    N.update(brand, rid, lambda d: [d.pop(k, None) for k in ("session", "session_ctx")])
     feed_add(brand, rid, {"t": "reset"})
 
 
@@ -406,6 +441,9 @@ if __name__ == "__main__":
     assert res["error"] and "setup-token" in res["hint"] and res["secs"] == 10
     res = brief({"type": "result", "is_error": True, "result": "Failed to authenticate: OAuth session expired"})[0]
     assert "setup-token" in res["hint"]
+    turn = {"type": "assistant", "message": {"usage": {"input_tokens": 5, "cache_read_input_tokens": 290000,
+                                                       "cache_creation_input_tokens": 7000, "output_tokens": 900}}}
+    assert context_of(turn) == 297005 and context_of(res) == 0
     assert N.comp_id("ab-12-ce") == "ReelAb12Ce" and N.comp_id("abc-01") == "ReelAbc01"
     os.environ["CLAUDECODE"] = "1"
     os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = "проверка"

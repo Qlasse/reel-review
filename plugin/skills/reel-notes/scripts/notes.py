@@ -4,11 +4,12 @@
 Запуск из корня проекта (или с REEL_REVIEW_ROOT); <scripts> — папка этого файла:
     python3 <scripts>/notes.py "<бренд>" <id> list              # ждут Claude (new, reopened)
     python3 <scripts>/notes.py "<бренд>" <id> list --all
-    python3 <scripts>/notes.py "<бренд>" <id> frame n1 before   # кадр пометки с отметками -> edit/<id>/notes/
+    python3 <scripts>/notes.py "<бренд>" <id> frame n1 n2 before   # кадры пометок с отметками -> edit/<id>/notes/
     python3 <scripts>/notes.py "<бренд>" <id> frame n1 after --master out/<id>.mp4 [--frame 380]
     python3 <scripts>/notes.py "<бренд>" <id> set n1 done "Плашку подняла на 40 px"
     python3 <scripts>/notes.py "<бренд>" <id> set n1 question "Убрать совсем или перенести на 12 с?"
-    python3 <scripts>/notes.py "<бренд>" <id> preview n1 [--frame 380]  # «после» из текущего кода, без рендера
+    python3 <scripts>/notes.py "<бренд>" <id> preview n1 n2 n3        # «после» из текущего кода, без рендера, одной сборкой
+    python3 <scripts>/notes.py "<бренд>" <id> preview n1 --frame 380  # другой кадр (только для одной пометки)
     python3 <scripts>/notes.py "<бренд>" <id> rule n1 "<файл правил>" "- 2026-11-24: …"
     python3 <scripts>/notes.py "<бренд>" <id> rule n1 none "частный случай, правилом не станет"
 
@@ -16,7 +17,8 @@ rule — предложение правила из правки (принято
 кнопкой «Записать» на странице: строка встаёт в конец раздела (--section, по умолчанию свой у каждого файла).
 
 preview рисует кадр (у пометки с отрезком — ещё клип отрезка) из текущего кода композиции через stills.mjs плагина:
-~2 с кадр, ~7 с на 3 с клипа. Это «после» до полного рендера; после рендера — frame <n> after с мастера.
+~2 с кадр, ~7 с на 3 с клипа, плюс ~8 с на сборку и запуск Chrome — поэтому все пометки одной командой. Это «после»
+до полного рендера; после рендера — frame <n> after с мастера.
 
 Статусы: new, reopened — ждут Claude; done, question, wontfix — ответил Claude; accepted — принято пользователем.
 Координаты фигур — в кадре 1080×1920, кадр — номер кадра мастера (с 0), range — [первый, последний] кадр.
@@ -255,9 +257,9 @@ def main():
     ap.add_argument("brand"); ap.add_argument("id")
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("list"); p.add_argument("--all", action="store_true")
-    p = sub.add_parser("frame"); p.add_argument("note"); p.add_argument("tag", choices=["before", "after"])
+    p = sub.add_parser("frame"); p.add_argument("note", nargs="+"); p.add_argument("tag", choices=["before", "after"])
     p.add_argument("--master"); p.add_argument("--frame", type=int)
-    p = sub.add_parser("preview"); p.add_argument("note"); p.add_argument("--frame", type=int)
+    p = sub.add_parser("preview"); p.add_argument("note", nargs="+"); p.add_argument("--frame", type=int)
     p.add_argument("--scale", type=float, default=0.5)
     p = sub.add_parser("set"); p.add_argument("note"); p.add_argument("status", choices=["done", "question", "wontfix"])
     p.add_argument("reply")
@@ -271,33 +273,45 @@ def main():
         for n in shown:
             print(describe(n))
         return
-    n = next((x for x in doc["notes"] if x["id"] == a.note), None)
-    if n is None:
-        sys.exit(f"нет пометки {a.note}")
+    many = a.cmd in ("frame", "preview")
+    ids = a.note if many else [a.note]
+    found = {x["id"]: x for x in doc["notes"] if x["id"] in ids}
+    if missing := [i for i in ids if i not in found]:
+        sys.exit(f"нет пометки {', '.join(missing)}")
+    if many and a.frame is not None and len(ids) > 1:
+        sys.exit("--frame — только для одной пометки")
+    n = found[ids[0]]
     if a.cmd == "frame":
         b = bdir(a.brand)
-        master = b / a.master if a.master else ROOT / n["master_path"]
-        frame = a.frame if a.frame is not None else n["frame"]
-        out = b / "edit" / a.id / "notes" / f"{n['id']}-{a.tag}.png"
-        draw_frame(master, frame, n.get("fps") or 30, n.get("shapes"), out)
-        update(a.brand, a.id, lambda d: upsert(d, {"id": n["id"], a.tag: str(out.relative_to(ROOT)),
-                                                   f"{a.tag}_frame": frame, f"{a.tag}_src": "master",
-                                                   **({"after_clip": None} if a.tag == "after" else {})}))
-        print(out)
+        for n in (found[i] for i in ids):
+            master = b / a.master if a.master else ROOT / n["master_path"]
+            frame = a.frame if a.frame is not None else n["frame"]
+            out = b / "edit" / a.id / "notes" / f"{n['id']}-{a.tag}.png"
+            draw_frame(master, frame, n.get("fps") or 30, n.get("shapes"), out)
+            update(a.brand, a.id, lambda d: upsert(d, {"id": n["id"], a.tag: str(out.relative_to(ROOT)),
+                                                       f"{a.tag}_frame": frame, f"{a.tag}_src": "master",
+                                                       **({"after_clip": None} if a.tag == "after" else {})}))
+            print(out)
     elif a.cmd == "preview":
-        frame = a.frame if a.frame is not None else n["frame"]
-        rng = n.get("range") if a.frame is None else None
-        got = render_preview(a.brand, a.id, [frame] + ([tuple(rng)] if rng else []), a.scale)
-        out = bdir(a.brand) / "edit" / a.id / "notes" / f"{n['id']}-after.png"
-        draw_frame(None, frame, 0, n.get("shapes"), out, image=got[0])
-        clip = got[1] if len(got) > 1 else None
-        if clip:
-            dst = out.with_name(f"{n['id']}-after.mp4")
-            os.replace(clip, dst)
-            clip = str(dst.relative_to(ROOT))
-        update(a.brand, a.id, lambda d: upsert(d, {"id": n["id"], "after": str(out.relative_to(ROOT)), "after_frame": frame,
-                                                   "after_src": "preview", "after_clip": clip}))
-        print(out, clip or "")
+        # одна сборка и один Chrome на все пометки: каждый отдельный запуск — ещё ~8 с
+        jobs_ = []
+        for n in (found[i] for i in ids):
+            frame = a.frame if a.frame is not None else n["frame"]
+            rng = n.get("range") if a.frame is None else None
+            jobs_.append((n, frame, tuple(rng) if rng else None))
+        items = [x for _, f, r in jobs_ for x in ([f] + ([r] if r else []))]
+        got = iter(render_preview(a.brand, a.id, items, a.scale))
+        for n, frame, rng in jobs_:
+            still, clip = next(got), next(got) if rng else None
+            out = bdir(a.brand) / "edit" / a.id / "notes" / f"{n['id']}-after.png"
+            draw_frame(None, frame, 0, n.get("shapes"), out, image=still)
+            if clip:
+                dst = out.with_name(f"{n['id']}-after.mp4")
+                shutil.copyfile(clip, dst)  # не replace: у двух пометок может быть один отрезок
+                clip = str(dst.relative_to(ROOT))
+            update(a.brand, a.id, lambda d: upsert(d, {"id": n["id"], "after": str(out.relative_to(ROOT)), "after_frame": frame,
+                                                       "after_src": "preview", "after_clip": clip}))
+            print(out, clip or "")
     elif a.cmd == "rule":
         if a.file == "none":
             rule = {"status": "none", "why": a.text}

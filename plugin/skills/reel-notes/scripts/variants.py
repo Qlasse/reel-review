@@ -16,6 +16,7 @@ notes.json и caption_edits.json). Лежат в edit/<id>/variants/<vid>/<кл�
 import argparse, json, os, re, shutil, subprocess, sys, time
 from pathlib import Path
 
+import config as C
 import notes as N
 from config import ROOT
 SKIP = {"notes.json", "caption_edits.json"}
@@ -36,7 +37,7 @@ def tracked(brand, rid):
     src = N.remotion(brand) / "src"
     fs = list(src.glob(N.comp_id(rid) + "*.tsx")) + list((src / "plans").glob(rid + "*.json"))
     fs += [p for p in (N.bdir(brand) / "edit" / rid).glob("*.json") if p.name not in SKIP]
-    return sorted(str(p.relative_to(ROOT)) if p.is_relative_to(ROOT) else str(p) for p in fs if p.is_file())
+    return sorted(C.relp(p) for p in fs if p.is_file())
 
 
 def in_snap(snap, rel):

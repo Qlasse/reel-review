@@ -67,7 +67,7 @@ code { font: 12px ui-monospace, Menlo, monospace; background: var(--panel2); pad
         <datalist id="models"><option value="opus"><option value="sonnet"><option value="haiku"></datalist>
         <span class="hint">Пусто — модель по умолчанию. sonnet дешевле и быстрее на мелких правках, opus — на графике и разборе.</span></label>
       <label><b>Усилие (effort)</b><select name="effort"></select>
-        <span class="hint">Пусто — по умолчанию. Выше — дольше думает, дороже, лучше на сложной графике.</span></label>
+        <span class="hint">Пусто — по умолчанию. Размышления остаются в разговоре: xhigh на правке пометок — около ¾ времени запуска и больше половины разговора. high — для обычных правок, xhigh — для сложной графики.</span></label>
       <label><b>Права Claude без чата</b><select name="permission_mode"></select>
         <span class="hint">auto — как в приложении: безопасное сам, опасное отклоняет. acceptEdits — правит файлы, но команды (рендер, ffmpeg) отклоняются.
         bypassPermissions — всё без спроса, включая удаление.</span></label>
@@ -77,6 +77,8 @@ code { font: 12px ui-monospace, Menlo, monospace; background: var(--panel2); pad
         <span class="hint">0.5 — 540×960, быстро. 1 — полный кадр, примерно вдвое дольше. Стоп-кадры всегда в полный размер.</span></label>
       <label><b>Выключать сервер без работы через, мин</b><input type="number" name="idle_minutes" min="0" max="1440" step="5">
         <span class="hint">Без работы — страница закрыта, а Claude, рендер и проверка не идут. 0 — не выключать. Включить снова — той же командой запуска.</span></label>
+      <label><b>Продолжать сессию ролика, пока разговор меньше, тыс. токенов</b><input type="number" name="resume_max_k" min="0" max="1000" step="10">
+        <span class="hint">Каждый ход Claude перечитывает весь разговор: продолжать сессию на 300 тыс. дольше и дороже, чем начать новую. 120 — продолжать после небольших запусков; 0 — каждый запуск с чистого листа.</span></label>
       <label><b>Добавлять к каждому заданию</b><textarea name="extra_prompt" placeholder="Например: «Отчёт в ленте — по-русски, не длиннее пяти строк»."></textarea></label>
       <div class="bar"><button class="primary" type="submit">Сохранить настройки</button><span class="msg" id="smsg"></span></div>
     </form>

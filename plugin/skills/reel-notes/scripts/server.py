@@ -45,8 +45,7 @@ owner = N.owner
 LAST = {"t": time.time()}  # последний запрос страницы — для выключения без работы
 
 
-def relp(p):
-    return str(p.relative_to(ROOT)) if p.is_relative_to(ROOT) else str(p)
+relp = C.relp
 
 
 def comps(brand):
@@ -289,9 +288,16 @@ class H(BaseHTTPRequestHandler):
                 return self.send(200, jobs.preview(brand, rid, body.get("frame"), body.get("range"), body.get("path")))
             if self.path == "/api/word":
                 return self.send(200, tracks.set_word(brand, rid, int(body["i"]), float(body["start"]), body["old"], body["text"]))
+            if self.path == "/api/word/time":
+                return self.send(200, tracks.set_word_time(brand, rid, int(body["i"]), float(body["start"]), body["old"],
+                                                           float(body["t0"]), float(body["t1"])))
+            if self.path == "/api/insert":
+                return self.send(200, tracks.set_insert(brand, rid, str(body["iid"]), float(body["start"]), body["edge"],
+                                                        float(body["t0"]), float(body["t1"])))
             if self.path == "/api/sound":
                 return self.send(200, tracks.set_sound(brand, rid, int(body["i"]), body["file"], body.get("at"),
-                                                       body.get("below_db"), body.get("gain_db")))
+                                                       body.get("below_db"), body.get("gain_db"), body.get("start"),
+                                                       body.get("dur")))
             if self.path == "/api/apply/sounds":
                 return self.send(200, tracks.apply_sounds(brand, rid, body["path"]))
             if self.path == "/api/apply/captions":

@@ -39,12 +39,16 @@ def fake_project(d, outside):
     e.mkdir(parents=True)
     words = [{"text": "Apple", "start": 0.02, "end": 0.3}, {"text": "выпустила", "start": 0.3, "end": 0.8}]
     (e / "captions.json").write_text(json.dumps({"duration": 10, "segments": [], "words": words}, indent=1))
-    (e / "reelkit-props.json").write_text(json.dumps({"captions": {"words": words}}, indent=1))
+    ins = {"id": "b01", "kind": "broll", "start": 3.0, "dur": 2.0}
+    (e / "visual_plan.json").write_text(json.dumps({"inserts": [ins]}, indent=1))
+    (e / "reelkit-props.json").write_text(json.dumps({"captions": {"words": words}, "inserts": [{**ins, "src_in": 0.5}]}, indent=1))
     (e / "sfx.json").write_text(json.dumps({"below_voice_db": 12, "sounds": [{"file": "a.wav", "at": 1.0, "below_db": 8}]}, indent=1))
     (e / "notes.json").write_text('{"notes": []}')
     (b / "brands" / "brand" / "brand.json").write_text(json.dumps({"colors": {"primary": "#ABCDEF", "accent": '#fff" onmouseover="x'}}))
     (outside / "src" / "plans").mkdir(parents=True)
     (outside / "src" / "ReelZz01.tsx").write_text("const X = 1;\n")
+    # копия вставок в плане композиции — вне корня: правка не должна падать на пути
+    (outside / "src" / "plans" / "zz-01.json").write_text(json.dumps({"inserts": [{**ins, "src_in": 0.5}]}, indent=1))
 
 
 def test_config(N, C):
@@ -88,6 +92,30 @@ def test_edits(tracks, d):
         raise AssertionError("должно не найти")
     except ValueError:
         pass
+    tracks.set_word_time("Brand", "zz-01", 1, 0.3, "выпустила", 0.34, 0.9)  # сдвиг и обрезка слова — во всех копиях
+    assert json.loads((e / "reelkit-props.json").read_text())["captions"]["words"][1] == \
+        {"text": "выпустила", "start": 0.34, "end": 0.9}
+    win = json.loads((e / "caption_edits.json").read_text())[-1]
+    assert (win["start"], win["end"], win["kind"]) == (0.3, 0.9, "word_time")  # окно — старое и новое место
+    tracks.set_insert("Brand", "zz-01", "b01", 3.0, "move", 4.0, 6.0)
+    tracks.set_insert("Brand", "zz-01", "b01", 4.0, "in", 3.6, 6.0)  # начало раньше — src_in тоже раньше
+    props = json.loads((e / "reelkit-props.json").read_text())["inserts"][0]
+    plan = json.loads((e / "visual_plan.json").read_text())["inserts"][0]
+    assert (props["start"], props["dur"], props["src_in"]) == (3.6, 2.4, 0.1) and (plan["start"], plan["dur"]) == (3.6, 2.4)
+    assert "src_in" not in plan  # в копии без src_in его не появляется
+    try:
+        tracks.set_insert("Brand", "zz-01", "b01", 3.6, "in", 3.0, 6.0)  # раньше начала исходника
+        raise AssertionError("src_in < 0")
+    except ValueError:
+        pass
+    tracks.set_insert("Brand", "zz-01", "b01", 3.6, "out", 3.6, 5.0)
+    assert json.loads((e / "reelkit-props.json").read_text())["inserts"][0]["dur"] == 1.4
+    (e / "caption_edits.json").unlink()
+    tracks.set_sound("Brand", "zz-01", 0, "a.wav", start=0.2, dur=0.5)
+    s = json.loads((e / "sfx.json").read_text())["sounds"][0]
+    assert (s["start"], s["dur"]) == (0.2, 0.5)
+    tracks.set_sound("Brand", "zz-01", 0, "a.wav", start=0, dur=0)  # 0 — обрезки нет, ключей тоже
+    assert {"start", "dur"}.isdisjoint(json.loads((e / "sfx.json").read_text())["sounds"][0])
     tracks.set_sound("Brand", "zz-01", 0, "a.wav", at=2.5, below_db=6)
     s = json.loads((e / "sfx.json").read_text())["sounds"][0]
     assert (s["at"], s["below_db"]) == (2.5, 6)
@@ -107,6 +135,24 @@ def test_variants(N, variants, d):
         for f in fs:
             f.write_bytes(b"x")
         return fs
+    N.render_preview = fake_preview
+    calls = []
+    def png_preview(*a, **k):
+        from PIL import Image
+        calls.append(a[2])
+        fs = fake_preview(*a, **k)
+        for f in fs:
+            if f.suffix == ".png":
+                Image.new("RGB", (54, 96)).save(f)
+        return fs
+    N.render_preview = png_preview
+    (N.bdir("Brand") / "edit/zz-01/notes.json").write_text(json.dumps({"notes": [
+        {"id": "p1", "frame": 10, "status": "new"}, {"id": "p2", "frame": 20, "range": [20, 50], "status": "new"}]}))
+    sys.argv = ["notes.py", "Brand", "zz-01", "preview", "p1", "p2"]
+    N.main()  # две пометки — один запуск предпросмотра на все кадры и отрезки
+    assert calls == [[10, 20, (20, 50)]], calls
+    got = {n["id"]: n for n in N.read("Brand", "zz-01")["notes"]}
+    assert got["p1"]["after"].endswith("p1-after.png") and got["p2"]["after_clip"].endswith("p2-after.mp4")
     N.render_preview = fake_preview
     variants.TRASH = ["rm"]
     tsx = OUT / "src" / "ReelZz01.tsx"

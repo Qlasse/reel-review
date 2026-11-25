@@ -32,6 +32,11 @@ DEFAULTS = {
 _cache = {"mtime": None, "data": dict(DEFAULTS)}
 
 
+def relp(p):
+    """Путь от корня проекта; Remotion-проект может лежать вне корня — тогда полный путь."""
+    return str(p.relative_to(ROOT)) if p.is_relative_to(ROOT) else str(p)
+
+
 def load():
     """Настройки проекта с умолчаниями; файл перечитывается, только если изменился."""
     m = FILE.stat().st_mtime if FILE.is_file() else 0
